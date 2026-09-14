@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -162,18 +164,10 @@ func (pc *PeriodCloser) EnsureOpenPeriod(ctx context.Context, scope Scope, ledge
 			return existing, nil
 		}
 
-		nextEffective, ok := catalog.EffectiveLedgerAfter(existing.PriceVersion)
-		if !ok {
-			// Unreachable in practice: wantVersion.Version != existing's
-			// version already proves a later version exists in catalog.
-			// Treated as a hard error rather than silently misbehaving —
-			// it means the catalog and the stored period disagree about
-			// something more fundamental.
-			return nil, fmt.Errorf(
-				"meter: ensure open period: catalog has no version after %d, but ledger %d resolved to version %d",
-				existing.PriceVersion, ledger, wantVersion.Version)
+		periodEnd, err := closeBoundaryFor(catalog, existing.PriceVersion, ledger)
+		if err != nil {
+			return nil, fmt.Errorf("meter: ensure open period: %w", err)
 		}
-		periodEnd := nextEffective - 1
 		if periodEnd < existing.PeriodStart {
 			return nil, fmt.Errorf(
 				"meter: ensure open period: computed period_end %d is before period_start %d for period %d",
@@ -185,4 +179,202 @@ func (pc *PeriodCloser) EnsureOpenPeriod(ctx context.Context, scope Scope, ledge
 	}
 
 	return pc.openPeriod(ctx, scope, channel, wantVersion.Version, wantVersion.EffectiveLedger)
+}
+
+// closeBoundaryFor returns the ledger a period recorded under priceVersion
+// must close at, given currentLedger and catalog: currentLedger itself if
+// the price version at currentLedger still matches priceVersion (nothing
+// to protect against), or the ledger just before the version that
+// followed priceVersion otherwise. Shared by EnsureOpenPeriod (which
+// detects a price change directly, from a live request) and
+// CloseDuePeriods (which detects a calendar duration elapsing, and must
+// independently guard against the version having ALSO moved on since the
+// period opened — nothing else was necessarily watching this period in
+// the meantime) — so neither trigger can ever produce a period whose
+// range spans more than one price version.
+func closeBoundaryFor(catalog *Catalog, priceVersion uint32, currentLedger uint32) (uint32, error) {
+	currentVersion, err := catalog.VersionAt(currentLedger)
+	if err != nil {
+		return 0, err
+	}
+	if currentVersion.Version == priceVersion {
+		return currentLedger, nil
+	}
+
+	nextEffective, ok := catalog.EffectiveLedgerAfter(priceVersion)
+	if !ok {
+		// Unreachable in practice: currentVersion.Version != priceVersion
+		// already proves a later version exists in catalog. Treated as a
+		// hard error rather than silently misbehaving — it means the
+		// catalog and the stored period disagree about something more
+		// fundamental.
+		return 0, fmt.Errorf("catalog has no version after %d, but ledger %d resolved to version %d",
+			priceVersion, currentLedger, currentVersion.Version)
+	}
+	return nextEffective - 1, nil
+}
+
+// CatalogSource resolves the price Catalog for a given operator.
+// CloseDuePeriods needs one per period it considers, since each
+// operator's price schedule is independent and a single scan spans every
+// operator/consumer/protocol scope at once. Implemented by whatever wires
+// together a live price_book reader in production (out of this package's
+// scope, the same way EnsureOpenPeriod's own catalog parameter always
+// has been); a narrow interface here keeps this package testable without
+// one.
+type CatalogSource interface {
+	CatalogFor(ctx context.Context, operator string) (*Catalog, error)
+}
+
+// LedgerSource supplies the current ledger sequence CloseDuePeriods
+// needs. Matches internal/httpapi's, internal/indexer's, and
+// internal/settle's own identically-shaped interface — no shared import,
+// per this codebase's established convention of each package defining
+// exactly the narrow interface it needs.
+type LedgerSource interface {
+	CurrentLedger(ctx context.Context) (uint32, error)
+}
+
+const findDuePeriodsSQL = `
+SELECT id, operator, consumer, protocol, channel, price_version, period_start
+FROM periods
+WHERE status = 'open' AND created_at < now() - $1::interval`
+
+type duePeriod struct {
+	id                        int64
+	operator, consumer        string
+	protocol                  string
+	channel                   *string
+	priceVersion, periodStart uint32
+}
+
+func (pc *PeriodCloser) findDuePeriods(ctx context.Context, maxAge time.Duration) ([]duePeriod, error) {
+	// Expressed as a plain "<seconds> seconds" interval literal rather
+	// than Go's own Duration.String() format (e.g. "720h0m0s") — Postgres
+	// parses the former unambiguously; the latter isn't valid interval
+	// syntax at all.
+	interval := fmt.Sprintf("%f seconds", maxAge.Seconds())
+
+	rows, err := pc.pool.Query(ctx, findDuePeriodsSQL, interval)
+	if err != nil {
+		return nil, fmt.Errorf("meter: find due periods: %w", err)
+	}
+	defer rows.Close()
+
+	var out []duePeriod
+	for rows.Next() {
+		var p duePeriod
+		var priceVersion, periodStart int32
+		if err := rows.Scan(&p.id, &p.operator, &p.consumer, &p.protocol, &p.channel, &priceVersion, &periodStart); err != nil {
+			return nil, fmt.Errorf("meter: find due periods: scan: %w", err)
+		}
+		p.priceVersion = uint32(priceVersion)
+		p.periodStart = uint32(periodStart)
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("meter: find due periods: %w", err)
+	}
+	return out, nil
+}
+
+func derefOrEmpty(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+// CloseDuePeriods closes every currently-open period whose age (time
+// since it was created) exceeds maxAge, regardless of whether its price
+// version has changed — the calendar trigger §6 implies alongside the
+// price-version one ("not only at month end"): an operator whose price
+// never changes must still get periods closed (and, from there,
+// anchored) on a regular cadence, not left open indefinitely. It does
+// not open a replacement period; the next request for that scope opens
+// one lazily via EnsureOpenPeriod, exactly as it always does.
+//
+// The closing boundary always goes through closeBoundaryFor — the same
+// logic EnsureOpenPeriod uses when it detects a price change directly —
+// so a calendar-triggered close can never produce a period whose range
+// spans more than one price version either, even if the version has ALSO
+// moved on since the period opened.
+//
+// One period's failure (an unresolvable catalog, a closeBoundaryFor
+// error, a failed ClosePeriod call) is logged and does not stop the
+// rest of the batch.
+func (pc *PeriodCloser) CloseDuePeriods(ctx context.Context, catalogs CatalogSource, currentLedger uint32, maxAge time.Duration) ([]Period, error) {
+	due, err := pc.findDuePeriods(ctx, maxAge)
+	if err != nil {
+		return nil, err
+	}
+
+	var closed []Period
+	for _, p := range due {
+		catalog, err := catalogs.CatalogFor(ctx, p.operator)
+		if err != nil {
+			slog.ErrorContext(ctx, "meter: period closer: resolve catalog, skipping this period this pass",
+				"period_id", p.id, "operator", p.operator, "error", err)
+			continue
+		}
+
+		periodEnd, err := closeBoundaryFor(catalog, p.priceVersion, currentLedger)
+		if err != nil {
+			slog.ErrorContext(ctx, "meter: period closer: compute close boundary, skipping this period this pass",
+				"period_id", p.id, "error", err)
+			continue
+		}
+		if periodEnd < p.periodStart {
+			slog.ErrorContext(ctx, "meter: period closer: computed period_end before period_start, skipping",
+				"period_id", p.id, "period_start", p.periodStart, "period_end", periodEnd)
+			continue
+		}
+
+		if err := pc.ClosePeriod(ctx, p.id, periodEnd); err != nil {
+			slog.ErrorContext(ctx, "meter: period closer: close period, skipping", "period_id", p.id, "error", err)
+			continue
+		}
+
+		closed = append(closed, Period{
+			ID: p.id,
+			Scope: Scope{
+				Operator: p.operator, Consumer: p.consumer, Protocol: p.protocol, Channel: derefOrEmpty(p.channel),
+			},
+			PriceVersion: p.priceVersion, PeriodStart: p.periodStart, PeriodEnd: &periodEnd, Status: "closed",
+		})
+	}
+	return closed, nil
+}
+
+// Run calls CloseDuePeriods every interval until ctx is cancelled. A
+// failed tick is logged and retried on the next interval, never fatal —
+// matching every other daemon loop in this codebase
+// (internal/indexer.Ingestor.Run, internal/settle.Daemon.Run): a paused
+// period closer means periods accumulate past their duration without
+// being closed, not that the process should give up.
+func (pc *PeriodCloser) Run(ctx context.Context, ledgers LedgerSource, catalogs CatalogSource, maxAge, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		currentLedger, err := ledgers.CurrentLedger(ctx)
+		if err != nil {
+			slog.ErrorContext(ctx, "meter: period closer: current ledger", "error", err)
+			continue
+		}
+
+		closed, err := pc.CloseDuePeriods(ctx, catalogs, currentLedger, maxAge)
+		if err != nil {
+			slog.ErrorContext(ctx, "meter: period closer: close due periods", "error", err)
+			continue
+		}
+		if len(closed) > 0 {
+			slog.InfoContext(ctx, "meter: period closer: closed periods past their duration", "count", len(closed))
+		}
+	}
 }
