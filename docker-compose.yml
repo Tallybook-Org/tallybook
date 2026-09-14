@@ -15,5 +15,70 @@ services:
       timeout: 5s
       retries: 10
 
+  # collector, settler, and indexer all need the same set of TB_* env
+  # vars (see .env.example) — the values that are genuinely
+  # deployment-specific (price_book/statement_registry contract IDs, the
+  # operator address and signing key) are read from a local .env file via
+  # docker-compose's own automatic variable substitution, not hardcoded
+  # here. Deliberately using ${VAR:-} (empty default) rather than
+  # ${VAR:?err} for these: docker-compose interpolates and validates the
+  # *entire* file before starting anything, even for a single named
+  # service — a hard requirement here would make `docker compose up
+  # postgres` (what `make up` runs, and what the test suite needs, with
+  # no .env at all) fail before Postgres could even start. Each
+  # container's own internal/config.LoadEnv already fails fast, in that
+  # container's own logs, naming whichever required variable is still
+  # empty (§7) — that's the actual enforcement point; copy .env.example
+  # to .env and fill it in before running `make up-all`.
+  collector:
+    build:
+      context: .
+      dockerfile: cmd/collector/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: &tallybook-env
+      TB_DATABASE_URL: postgres://tallybook:tallybook@postgres:5432/tallybook?sslmode=disable
+      TB_STELLAR_RPC_URL: ${TB_STELLAR_RPC_URL:-https://soroban-testnet.stellar.org}
+      TB_NETWORK_PASSPHRASE: ${TB_NETWORK_PASSPHRASE:-Test SDF Network ; September 2015}
+      TB_PRICE_BOOK_ID: ${TB_PRICE_BOOK_ID:-}
+      TB_STATEMENT_REGISTRY_ID: ${TB_STATEMENT_REGISTRY_ID:-}
+      TB_OPERATOR_ADDRESS: ${TB_OPERATOR_ADDRESS:-}
+      TB_OPERATOR_SECRET_SOURCE: ${TB_OPERATOR_SECRET_SOURCE:-env}
+      TB_OPERATOR_SECRET: ${TB_OPERATOR_SECRET:-}
+      TB_OPERATOR_SECRET_PATH: ${TB_OPERATOR_SECRET_PATH:-}
+      TB_SAFETY_MARGIN_LEDGERS: ${TB_SAFETY_MARGIN_LEDGERS:-1440}
+      TB_MAX_EXPOSURE: ${TB_MAX_EXPOSURE:-10000000}
+      TB_MAX_EXPOSURE_AGE: ${TB_MAX_EXPOSURE_AGE:-24h}
+      TB_PERIOD_DURATION: ${TB_PERIOD_DURATION:-720h}
+      TB_SETTLER_TICK: ${TB_SETTLER_TICK:-30s}
+      TB_INDEXER_START_LEDGER: ${TB_INDEXER_START_LEDGER:-4590000}
+      TB_COLLECTOR_ADDR: ":8080"
+      TB_LOG_LEVEL: ${TB_LOG_LEVEL:-info}
+    ports:
+      - "8080:8080"
+
+  settler:
+    build:
+      context: .
+      dockerfile: cmd/settler/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *tallybook-env
+    ports:
+      - "9101:9101" # /metrics, /healthz, /readyz — see cmd/settler's own fixed metricsAddr
+
+  indexer:
+    build:
+      context: .
+      dockerfile: cmd/indexer/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment: *tallybook-env
+    ports:
+      - "9102:9102" # /healthz, /readyz — see cmd/indexer's own fixed healthAddr
+
 volumes:
   tallybook-postgres:

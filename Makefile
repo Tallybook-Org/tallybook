@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt fmt-check staticcheck lint check tidy up down
+.PHONY: build test vet fmt fmt-check staticcheck lint check tidy up down up-all down-all
 
 GOFILES := $(shell find . -name '*.go' -not -path './vendor/*')
 
@@ -26,8 +26,18 @@ check: fmt-check vet staticcheck test
 tidy:
 	go mod tidy
 
+# up/down: just Postgres — what the test suite needs (§8: integration
+# tests against real Postgres, not the app binaries). docker-compose.yml
+# also defines collector/settler/indexer services now; up-all/down-all
+# bring up the full stack (needs .env filled in — see .env.example).
 up:
-	docker compose up -d
+	docker compose up -d postgres
 
 down:
+	docker compose down
+
+up-all:
+	docker compose up -d --build
+
+down-all:
 	docker compose down

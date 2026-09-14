@@ -65,7 +65,7 @@ tallybook/
 ├── go.mod
 ├── go.sum
 ├── Makefile
-├── docker-compose.yml               # postgres only, for local dev
+├── docker-compose.yml               # postgres, plus collector/settler/indexer service blocks
 ├── .env.example
 ├── .gitignore
 ├── README.md
