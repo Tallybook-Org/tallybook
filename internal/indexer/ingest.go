@@ -82,6 +82,14 @@ type Config struct {
 	Pool                *pgxpool.Pool
 	PriceBookID         string
 	StatementRegistryID string
+	// OperatorAddress is this deployment's own operator (TB_OPERATOR_ADDRESS,
+	// §7). Required so channel discovery (see applyChannelOpen) can reject
+	// a channel whose recipient isn't this operator — the topic-only
+	// channel filter (see the package doc comment) has no contract ID
+	// restriction, so without this check this package would start
+	// watching, and the settler would start acting on, any channel that
+	// happens to pay out to someone else entirely.
+	OperatorAddress string
 	// StartLedger is where ingestion begins if no cursor has been
 	// persisted yet (TB_INDEXER_START_LEDGER, §7).
 	StartLedger uint32
@@ -103,6 +111,9 @@ func (cfg Config) validate() error {
 	if cfg.StatementRegistryID == "" {
 		return errors.New("indexer: config: statement registry id is empty")
 	}
+	if cfg.OperatorAddress == "" {
+		return errors.New("indexer: config: operator address is empty")
+	}
 	return nil
 }
 
@@ -113,6 +124,7 @@ type Ingestor struct {
 	pool                *pgxpool.Pool
 	priceBookID         string
 	statementRegistryID string
+	operatorAddress     string
 	startLedger         uint32
 	pageLimit           uint32
 }
@@ -128,7 +140,8 @@ func New(cfg Config) (*Ingestor, error) {
 	return &Ingestor{
 		client: cfg.Client, pool: cfg.Pool,
 		priceBookID: cfg.PriceBookID, statementRegistryID: cfg.StatementRegistryID,
-		startLedger: cfg.StartLedger, pageLimit: cfg.PageLimit,
+		operatorAddress: cfg.OperatorAddress,
+		startLedger:     cfg.StartLedger, pageLimit: cfg.PageLimit,
 	}, nil
 }
 
@@ -346,7 +359,7 @@ func (ix *Ingestor) Tick(ctx context.Context) (int, error) {
 		if err := persistEvent(ctx, tx, ev, kind); err != nil {
 			return persisted, fmt.Errorf("indexer: event %s: %w", ev.ID, err)
 		}
-		if err := applyChannelEvent(ctx, tx, ev, kind); err != nil {
+		if err := applyChannelEvent(ctx, tx, ev, kind, ix.operatorAddress); err != nil {
 			return persisted, fmt.Errorf("indexer: event %s: %w", ev.ID, err)
 		}
 		persisted++

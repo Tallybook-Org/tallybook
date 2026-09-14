@@ -182,6 +182,44 @@ func TestApplyChannelOpen_CreatesRowWithOperatorFunderMapping(t *testing.T) {
 	}
 }
 
+// TestApplyChannelOpen_IgnoresChannelForADifferentOperator confirms the
+// filter that matters most given the channel event filter has no contract
+// ID restriction (ingest.go's package doc comment): an Open event whose
+// `to` isn't this deployment's own TB_OPERATOR_ADDRESS must be discarded
+// outright, not stored as a channel to watch — the settler must never act
+// on a channel that pays out to somebody else.
+func TestApplyChannelOpen_IgnoresChannelForADifferentOperator(t *testing.T) {
+	pool := testIndexerPool(t)
+	someoneElse := testFunder // a real, valid G-address, just not testOperator
+	ev := stellar.EventInfo{
+		Type: "contract", Ledger: 1000, LedgerClosedAt: "2026-09-11T00:00:00Z",
+		ContractID: testChannelAddress, ID: "00000000000000001000-0000000000",
+		TxHash: "ee00000000000000000000000000000000000000000000000000000000000000",
+		Topic:  []string{topicB64(t, stellar.TopicOpen)},
+		Value:  buildChannelOpenValue(t, testOperator, someoneElse, testToken, 5_000_000, 1440),
+	}
+	client := &fakeEventsSource{results: []*stellar.GetEventsResult{
+		{Events: []stellar.EventInfo{ev}, Cursor: "C1"},
+	}}
+	ix := newTestIngestor(t, pool, client)
+
+	n, err := ix.Tick(context.Background())
+	if err != nil {
+		t.Fatalf("Tick returned unexpected error: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("Tick persisted %d events, want 1 (the chain_events row is still written regardless)", n)
+	}
+
+	var count int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM channels`).Scan(&count); err != nil {
+		t.Fatalf("count channels: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("channels has %d rows, want 0 (a channel for a different operator must not be tracked)", count)
+	}
+}
+
 func TestApplyChannelOpen_DuplicateEventIsIdempotent(t *testing.T) {
 	pool := testIndexerPool(t)
 	ev := openEventInfo(t, 1000, 5_000_000, 1440)

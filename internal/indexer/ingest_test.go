@@ -150,7 +150,8 @@ func newTestIngestor(t *testing.T, pool *pgxpool.Pool, client EventsSource) *Ing
 	ix, err := New(Config{
 		Client: client, Pool: pool,
 		PriceBookID: testPriceBookID, StatementRegistryID: testRegistryID,
-		StartLedger: testStartLedger,
+		OperatorAddress: testOperator,
+		StartLedger:     testStartLedger,
 	})
 	if err != nil {
 		t.Fatalf("New returned unexpected error: %v", err)
@@ -161,7 +162,7 @@ func newTestIngestor(t *testing.T, pool *pgxpool.Pool, client EventsSource) *Ing
 func TestNew_Validation(t *testing.T) {
 	valid := Config{
 		Client: &fakeEventsSource{}, Pool: &pgxpool.Pool{},
-		PriceBookID: "CB...", StatementRegistryID: "CB...", StartLedger: 1,
+		PriceBookID: "CB...", StatementRegistryID: "CB...", OperatorAddress: "GA...", StartLedger: 1,
 	}
 	tests := []struct {
 		name   string
@@ -171,6 +172,7 @@ func TestNew_Validation(t *testing.T) {
 		{"nil pool", func(c *Config) { c.Pool = nil }},
 		{"empty price book id", func(c *Config) { c.PriceBookID = "" }},
 		{"empty statement registry id", func(c *Config) { c.StatementRegistryID = "" }},
+		{"empty operator address", func(c *Config) { c.OperatorAddress = "" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

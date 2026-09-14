@@ -16,11 +16,13 @@ import (
 // chain_events insert and cursor update — so channel state and the event
 // that produced it can never be inconsistent with each other. Called from
 // Tick for every event whose Kind is one of the four channel kinds; a
-// no-op for anything else.
-func applyChannelEvent(ctx context.Context, tx pgx.Tx, ev stellar.EventInfo, kind Kind) error {
+// no-op for anything else. operatorAddress is this deployment's own
+// TB_OPERATOR_ADDRESS, needed by applyChannelOpen to reject a channel that
+// isn't actually this operator's.
+func applyChannelEvent(ctx context.Context, tx pgx.Tx, ev stellar.EventInfo, kind Kind, operatorAddress string) error {
 	switch kind {
 	case KindChannelOpen:
-		return applyChannelOpen(ctx, tx, ev)
+		return applyChannelOpen(ctx, tx, ev, operatorAddress)
 	case KindChannelClose:
 		return applyChannelClose(ctx, tx, ev)
 	case KindChannelWithdraw:
@@ -50,13 +52,30 @@ ON CONFLICT (address) DO NOTHING`
 // "To returns the recipient's address") is the operator being paid, and
 // the funder (`from`) is the consumer/payer depositing into the channel.
 //
+// decoded.To is checked against operatorAddress before anything is
+// written, and the channel is discarded (not stored, not an error) if
+// they don't match. This matters specifically because the channel filter
+// has no contract ID restriction (see ingest.go's package doc comment):
+// without this check, this package would start watching — and the
+// settler, later, would start acting on — every channel on the network
+// that happens to emit the right topic shape, regardless of who it
+// actually pays out to. A channel whose recipient is some other operator
+// entirely is not this deployment's to track.
+//
 // ON CONFLICT DO NOTHING makes re-ingesting the same Open event (a cursor
 // overlap on resume) harmless, matching chain_events' own idempotency.
-func applyChannelOpen(ctx context.Context, tx pgx.Tx, ev stellar.EventInfo) error {
+func applyChannelOpen(ctx context.Context, tx pgx.Tx, ev stellar.EventInfo, operatorAddress string) error {
 	decoded, err := stellar.DecodeChannelOpenEvent(ev.Value)
 	if err != nil {
 		return fmt.Errorf("indexer: decode channel Open event: %w", err)
 	}
+
+	if decoded.To != operatorAddress {
+		slog.DebugContext(ctx, "indexer: Open event for a channel that isn't this operator's, ignoring",
+			"channel", ev.ContractID, "to", decoded.To, "operator", operatorAddress)
+		return nil
+	}
+
 	deposited := pgtype.Numeric{Int: decoded.Amount, Exp: 0, Valid: true}
 
 	if _, err := tx.Exec(ctx, insertChannelSQL,
