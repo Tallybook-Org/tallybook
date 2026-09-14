@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-vet-staticcheck-test:
+    runs-on: ubuntu-latest
+
+    # Every package's own tests connect directly to
+    # postgres://tallybook:tallybook@localhost:5433/tallybook (§8:
+    # "Integration tests against real Postgres in Docker, not mocks") —
+    # the same credentials and port docker-compose.yml uses for local
+    # dev, hardcoded per-package rather than read from an env var. This
+    # service block has to match that exactly, not just be "a postgres".
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tallybook
+          POSTGRES_PASSWORD: tallybook
+          POSTGRES_DB: tallybook
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U tallybook -d tallybook"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download modules
+        run: go mod download
+
+      - name: gofmt
+        run: |
+          fmt_out="$(gofmt -l .)"
+          if [ -n "$fmt_out" ]; then
+            echo "The following files are not gofmt'd:"
+            echo "$fmt_out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@2025.1.1
+          staticcheck ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test
+        run: go test ./... -v -count=1
