@@ -56,7 +56,12 @@ services:
       TB_COLLECTOR_ADDR: ":8080"
       TB_LOG_LEVEL: ${TB_LOG_LEVEL:-info}
     ports:
-      - "8080:8080"
+      # Host side only — remapped off 8080 because that host port is
+      # already bound by an unrelated container on this machine
+      # (confirmed via `docker ps`, not a Tallybook defect). The
+      # container's own listen address stays :8080 (TB_COLLECTOR_ADDR
+      # above); only the published/host port changes.
+      - "8081:8080"
 
   settler:
     build:
