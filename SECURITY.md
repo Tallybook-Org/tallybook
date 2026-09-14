@@ -6,6 +6,26 @@ could lead to lost funds, a forged commitment, an unauthorized
 settlement, or a leaked signing key as a security issue, even if you're
 not sure — err toward reporting it privately.
 
+## Audit status
+
+**This repository has not been audited**, and it depends on contracts
+this repository does not own or control:
+
+`price_book` and `statement_registry` are built and deployed by
+[tallybook-contracts](https://github.com/Tallybook-Org/tallybook-contracts) —
+see that repository's own `SECURITY.md` for their audit status.
+
+**Tallybook's MPP payment channel mode depends on
+[`stellar-experimental/one-way-channel`](https://github.com/stellar-experimental/one-way-channel),
+and that contract is unaudited.** This repository does not fork, vendor,
+or reimplement any part of it — `internal/stellar/channel.go` only calls
+it — but anything built on Tallybook's MPP session mode inherits
+`one-way-channel`'s unaudited status along with whatever this repository's
+own audit status ends up being.
+
+Do not deploy this system, or any system built on top of it, to hold or
+move real funds without an independent security audit first.
+
 ## Reporting a vulnerability
 
 **Please do not open a public GitHub issue for a security problem.**
