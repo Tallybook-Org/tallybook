@@ -165,6 +165,219 @@ func TestClosePeriod_NotFoundOrNotOpen(t *testing.T) {
 	}
 }
 
+func threeVersionMeterCatalog(t *testing.T) *Catalog {
+	t.Helper()
+	sched, err := ParseSchedule([]byte(`{"rules":[{"method":"GET","path_template":"/v1/x","unit_price":"1"}]}`))
+	if err != nil {
+		t.Fatalf("ParseSchedule returned unexpected error: %v", err)
+	}
+	catalog, err := NewCatalog(
+		CatalogVersion{Version: 1, EffectiveLedger: 1000, Schedule: sched},
+		CatalogVersion{Version: 2, EffectiveLedger: 2000, Schedule: sched},
+		CatalogVersion{Version: 3, EffectiveLedger: 3000, Schedule: sched},
+	)
+	if err != nil {
+		t.Fatalf("NewCatalog returned unexpected error: %v", err)
+	}
+	return catalog
+}
+
+func fetchPeriod(t *testing.T, pool *pgxpool.Pool, id int64) Period {
+	t.Helper()
+	var p Period
+	var priceVersion, periodStart int32
+	var periodEnd *int32
+	err := pool.QueryRow(context.Background(),
+		`SELECT price_version, period_start, period_end, status FROM periods WHERE id = $1`, id,
+	).Scan(&priceVersion, &periodStart, &periodEnd, &p.Status)
+	if err != nil {
+		t.Fatalf("fetch period %d: %v", id, err)
+	}
+	p.ID = id
+	p.PriceVersion = uint32(priceVersion)
+	p.PeriodStart = uint32(periodStart)
+	if periodEnd != nil {
+		v := uint32(*periodEnd)
+		p.PeriodEnd = &v
+	}
+	return p
+}
+
+// TestEnsureOpenPeriod_ClosesAndReopensOnVersionChange is the literal
+// "period split at a price change" coverage: a period opened under
+// version 1 must close, and a new one open under version 2, the instant
+// EnsureOpenPeriod observes a ledger that now resolves to version 2 — not
+// at the observation ledger, but at the exact version-2 boundary the
+// catalog records.
+func TestEnsureOpenPeriod_ClosesAndReopensOnVersionChange(t *testing.T) {
+	pool := testMeterPool(t)
+	pc := NewPeriodCloser(pool)
+	catalog := threeVersionMeterCatalog(t)
+	scope := testScope()
+
+	first, err := pc.EnsureOpenPeriod(context.Background(), scope, 1500, catalog) // under version 1
+	if err != nil {
+		t.Fatalf("first EnsureOpenPeriod returned unexpected error: %v", err)
+	}
+
+	// Observed later, at ledger 2500 — well past version 2's own
+	// EffectiveLedger (2000), simulating the realistic case where nothing
+	// calls EnsureOpenPeriod at the exact instant a version takes effect.
+	second, err := pc.EnsureOpenPeriod(context.Background(), scope, 2500, catalog)
+	if err != nil {
+		t.Fatalf("second EnsureOpenPeriod returned unexpected error: %v", err)
+	}
+
+	if second.ID == first.ID {
+		t.Fatal("EnsureOpenPeriod returned the same period across a version change, want a new one")
+	}
+	if second.PriceVersion != 2 {
+		t.Errorf("second period PriceVersion = %d, want 2", second.PriceVersion)
+	}
+	if second.PeriodStart != 2000 {
+		t.Errorf("second period PeriodStart = %d, want 2000 (version 2's own EffectiveLedger, not the observation ledger 2500)", second.PeriodStart)
+	}
+
+	closedFirst := fetchPeriod(t, pool, first.ID)
+	if closedFirst.Status != "closed" {
+		t.Errorf("first period Status = %q, want closed", closedFirst.Status)
+	}
+	if closedFirst.PeriodEnd == nil || *closedFirst.PeriodEnd != 1999 {
+		t.Errorf("first period PeriodEnd = %v, want 1999 (one ledger before version 2 took effect)", closedFirst.PeriodEnd)
+	}
+
+	// The core invariant anchor itself enforces (§4 constraint 1):
+	// version_at(period_start) must equal version_at(period_end).
+	startVersion, err := catalog.VersionAt(closedFirst.PeriodStart)
+	if err != nil {
+		t.Fatalf("VersionAt(period_start): %v", err)
+	}
+	endVersion, err := catalog.VersionAt(*closedFirst.PeriodEnd)
+	if err != nil {
+		t.Fatalf("VersionAt(period_end): %v", err)
+	}
+	if startVersion.Version != endVersion.Version {
+		t.Errorf("closed period spans versions %d and %d, want it to stay within one version",
+			startVersion.Version, endVersion.Version)
+	}
+}
+
+// TestEnsureOpenPeriod_SkipsIntermediateVersionWithNoActivity is the
+// sharpest correctness case: version 2 comes and goes with zero requests
+// ever observed during its window. The period opened under version 1
+// must still close exactly at version 2's boundary (1999), not version
+// 3's (2999) — using version 3's boundary (whatever "current" happens to
+// be) would make the closed period's range span both version 1 and
+// version 2, exactly what closing exists to prevent, even though no
+// period row for version 2 itself will ever exist.
+func TestEnsureOpenPeriod_SkipsIntermediateVersionWithNoActivity(t *testing.T) {
+	pool := testMeterPool(t)
+	pc := NewPeriodCloser(pool)
+	catalog := threeVersionMeterCatalog(t)
+	scope := testScope()
+
+	first, err := pc.EnsureOpenPeriod(context.Background(), scope, 1500, catalog) // version 1
+	if err != nil {
+		t.Fatalf("first EnsureOpenPeriod returned unexpected error: %v", err)
+	}
+
+	// Jumps straight to a ledger under version 3 — version 2's entire
+	// window passes with nothing observed.
+	third, err := pc.EnsureOpenPeriod(context.Background(), scope, 3500, catalog)
+	if err != nil {
+		t.Fatalf("second EnsureOpenPeriod returned unexpected error: %v", err)
+	}
+
+	if third.PriceVersion != 3 {
+		t.Errorf("PriceVersion = %d, want 3", third.PriceVersion)
+	}
+	if third.PeriodStart != 3000 {
+		t.Errorf("PeriodStart = %d, want 3000 (version 3's own EffectiveLedger)", third.PeriodStart)
+	}
+
+	closedFirst := fetchPeriod(t, pool, first.ID)
+	if closedFirst.PeriodEnd == nil || *closedFirst.PeriodEnd != 1999 {
+		t.Fatalf("first period PeriodEnd = %v, want 1999 — the boundary right after ITS OWN version (1), "+
+			"not 2999 (right after version 2, which is merely \"current\" now)", closedFirst.PeriodEnd)
+	}
+
+	startVersion, err := catalog.VersionAt(closedFirst.PeriodStart)
+	if err != nil {
+		t.Fatalf("VersionAt(period_start): %v", err)
+	}
+	endVersion, err := catalog.VersionAt(*closedFirst.PeriodEnd)
+	if err != nil {
+		t.Fatalf("VersionAt(period_end): %v", err)
+	}
+	if startVersion.Version != 1 || endVersion.Version != 1 {
+		t.Errorf("closed period resolves to versions %d..%d, want both to be version 1",
+			startVersion.Version, endVersion.Version)
+	}
+
+	// No period row was ever created for version 2 — nothing was observed
+	// during its window, and none should be invented.
+	var count int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM periods WHERE price_version = 2`).Scan(&count); err != nil {
+		t.Fatalf("count version-2 periods: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("found %d periods for version 2, want 0", count)
+	}
+}
+
+func TestEnsureOpenPeriod_ScopeIsolation(t *testing.T) {
+	pool := testMeterPool(t)
+	pc := NewPeriodCloser(pool)
+	catalog := singleVersionCatalog(t)
+
+	scopeA := Scope{Operator: testOperator, Consumer: testConsumer, Protocol: "x402"}
+	scopeB := Scope{Operator: testOperator, Consumer: "GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG", Protocol: "x402"}
+
+	pA, err := pc.EnsureOpenPeriod(context.Background(), scopeA, 1500, catalog)
+	if err != nil {
+		t.Fatalf("EnsureOpenPeriod(scopeA) returned unexpected error: %v", err)
+	}
+	pB, err := pc.EnsureOpenPeriod(context.Background(), scopeB, 1500, catalog)
+	if err != nil {
+		t.Fatalf("EnsureOpenPeriod(scopeB) returned unexpected error: %v", err)
+	}
+	if pA.ID == pB.ID {
+		t.Error("two different consumers were given the same open period")
+	}
+
+	var count int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM periods WHERE status = 'open'`).Scan(&count); err != nil {
+		t.Fatalf("count open periods: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("open periods = %d, want 2 (one per scope)", count)
+	}
+}
+
+func TestEnsureOpenPeriod_ChannelDistinguishesScope(t *testing.T) {
+	pool := testMeterPool(t)
+	pc := NewPeriodCloser(pool)
+	catalog := singleVersionCatalog(t)
+
+	x402Scope := Scope{Operator: testOperator, Consumer: testConsumer, Protocol: "x402"}
+	sessionScope := Scope{
+		Operator: testOperator, Consumer: testConsumer, Protocol: "mpp_session",
+		Channel: "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW",
+	}
+
+	pX, err := pc.EnsureOpenPeriod(context.Background(), x402Scope, 1500, catalog)
+	if err != nil {
+		t.Fatalf("EnsureOpenPeriod(x402Scope) returned unexpected error: %v", err)
+	}
+	pS, err := pc.EnsureOpenPeriod(context.Background(), sessionScope, 1500, catalog)
+	if err != nil {
+		t.Fatalf("EnsureOpenPeriod(sessionScope) returned unexpected error: %v", err)
+	}
+	if pX.ID == pS.ID {
+		t.Error("an x402 scope and an mpp_session scope for the same operator/consumer shared a period")
+	}
+}
+
 func TestCatalog_EffectiveLedgerAfter(t *testing.T) {
 	sched, err := ParseSchedule([]byte(`{"rules":[{"method":"GET","path_template":"/v1/x","unit_price":"1"}]}`))
 	if err != nil {
