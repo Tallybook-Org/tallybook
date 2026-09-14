@@ -33,6 +33,7 @@ const (
 	envSafetyMarginLedgers  = "TB_SAFETY_MARGIN_LEDGERS"
 	envMaxExposure          = "TB_MAX_EXPOSURE"
 	envMaxExposureAge       = "TB_MAX_EXPOSURE_AGE"
+	envPeriodDuration       = "TB_PERIOD_DURATION"
 	envSettlerTick          = "TB_SETTLER_TICK"
 	envIndexerStartLedger   = "TB_INDEXER_START_LEDGER"
 	envCollectorAddr        = "TB_COLLECTOR_ADDR"
@@ -74,10 +75,16 @@ type Config struct {
 	SafetyMarginLedgers uint32
 	MaxExposure         *big.Int
 	MaxExposureAge      time.Duration
-	SettlerTick         time.Duration
-	IndexerStartLedger  uint32
-	CollectorAddr       string
-	LogLevel            slog.Level
+	// PeriodDuration is how long a billing period may stay open before
+	// the collector closes it on calendar grounds alone, independent of
+	// any price version change (§6: a period also closes "whenever the
+	// price book version changes, not only at month end" — implying a
+	// second, calendar-based trigger exists too; this is it).
+	PeriodDuration     time.Duration
+	SettlerTick        time.Duration
+	IndexerStartLedger uint32
+	CollectorAddr      string
+	LogLevel           slog.Level
 }
 
 // String renders the config for logs and error messages with the operator
@@ -90,11 +97,11 @@ func (c *Config) String() string {
 	return fmt.Sprintf(
 		"Config{DatabaseURL:%s StellarRPCURL:%s NetworkPassphrase:%s PriceBookID:%s "+
 			"StatementRegistryID:%s OperatorAddress:%s OperatorSecretSource:%s OperatorSecret:%s "+
-			"OperatorSecretPath:%s SafetyMarginLedgers:%d MaxExposure:%s MaxExposureAge:%s SettlerTick:%s "+
+			"OperatorSecretPath:%s SafetyMarginLedgers:%d MaxExposure:%s MaxExposureAge:%s PeriodDuration:%s SettlerTick:%s "+
 			"IndexerStartLedger:%d CollectorAddr:%s LogLevel:%s}",
 		c.DatabaseURL, c.StellarRPCURL, c.NetworkPassphrase, c.PriceBookID,
 		c.StatementRegistryID, c.OperatorAddress, c.OperatorSecretSource, c.OperatorSecret,
-		c.OperatorSecretPath, c.SafetyMarginLedgers, c.MaxExposure, c.MaxExposureAge, c.SettlerTick,
+		c.OperatorSecretPath, c.SafetyMarginLedgers, c.MaxExposure, c.MaxExposureAge, c.PeriodDuration, c.SettlerTick,
 		c.IndexerStartLedger, c.CollectorAddr, c.LogLevel,
 	)
 }
@@ -243,6 +250,17 @@ func Load(lookup Lookup) (*Config, error) {
 			errs = append(errs, fmt.Errorf("config: %s: must be positive, got %s", envMaxExposureAge, v))
 		} else {
 			cfg.MaxExposureAge = v
+		}
+	}
+
+	if raw := get(envPeriodDuration); raw != "" {
+		v, err := time.ParseDuration(raw)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("config: %s: %w", envPeriodDuration, err))
+		} else if v <= 0 {
+			errs = append(errs, fmt.Errorf("config: %s: must be positive, got %s", envPeriodDuration, v))
+		} else {
+			cfg.PeriodDuration = v
 		}
 	}
 
