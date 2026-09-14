@@ -288,9 +288,12 @@ func persistEvent(ctx context.Context, tx pgx.Tx, ev stellar.EventInfo, kind Kin
 
 // Tick runs one ingestion cycle: fetch events since the last persisted
 // cursor (or StartLedger if none exists yet), classify and persist each
-// one, and advance the cursor — all in a single transaction, so a partial
-// failure never advances the cursor past events that were never actually
-// written. It returns the number of events persisted.
+// one (applying it to the channels table too, for the four channel
+// lifecycle kinds — see channels.go), and advance the cursor — all in a
+// single transaction, so a partial failure never advances the cursor past
+// events that were never actually written, and channel state can never
+// drift out of sync with the event that produced it. It returns the
+// number of events persisted.
 //
 // A duplicate event from a cursor overlapping the previous tick (or a
 // resume after a crash between commit and... there is no such window,
@@ -341,6 +344,9 @@ func (ix *Ingestor) Tick(ctx context.Context) (int, error) {
 			continue
 		}
 		if err := persistEvent(ctx, tx, ev, kind); err != nil {
+			return persisted, fmt.Errorf("indexer: event %s: %w", ev.ID, err)
+		}
+		if err := applyChannelEvent(ctx, tx, ev, kind); err != nil {
 			return persisted, fmt.Errorf("indexer: event %s: %w", ev.ID, err)
 		}
 		persisted++
