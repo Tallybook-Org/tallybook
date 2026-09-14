@@ -152,54 +152,25 @@ UPDATE settlements SET status = 'failed', tx_hash = NULLIF($2, ''), failure_reas
 // the outcome — confirmed with its tx hash, or failed with the error —
 // is recorded once Settle returns.
 func (s *Submitter) Submit(ctx context.Context, channel ChannelSettler, signer *keypair.Full, channelAddress string, amount *big.Int) (*Record, error) {
-	if amount == nil {
-		return nil, errors.New("settle: submit: amount is nil")
-	}
-	amountNum := pgtype.Numeric{Int: new(big.Int).Set(amount), Exp: 0, Valid: true}
-
-	existing, err := s.find(ctx, channelAddress, amountNum)
+	rec, sig, resolved, err := s.recordOrFindIntent(ctx, channelAddress, amount)
 	if err != nil {
 		return nil, err
 	}
-	if existing != nil {
-		if existing.Status == "submitting" {
-			return existing, fmt.Errorf("settle: submit %s %s: %w", channelAddress, amount, ErrSettlementInFlight)
+	if resolved {
+		if rec.Status == "submitting" {
+			return rec, fmt.Errorf("settle: submit %s %s: %w", channelAddress, amount, ErrSettlementInFlight)
 		}
-		return existing, nil
+		return rec, nil
 	}
-
-	sig, err := s.lookupCommitmentSignature(ctx, channelAddress, amountNum)
-	if err != nil {
-		return nil, fmt.Errorf("settle: submit %s %s: %w", channelAddress, amount, err)
-	}
-
-	var rec Record
-	err = s.pool.QueryRow(ctx, insertSettlementSQL, channelAddress, amountNum).Scan(&rec.ID, &rec.SubmittedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		// Lost a race with a concurrent Submit for the same key between
-		// find and here. Re-fetch and treat it the same way an
-		// already-existing row above would be treated.
-		again, findErr := s.find(ctx, channelAddress, amountNum)
-		if findErr != nil {
-			return nil, findErr
-		}
-		if again == nil {
-			return nil, fmt.Errorf("settle: submit %s %s: insert conflicted but no row found on re-read", channelAddress, amount)
-		}
-		if again.Status == "submitting" {
-			return again, fmt.Errorf("settle: submit %s %s: %w", channelAddress, amount, ErrSettlementInFlight)
-		}
-		return again, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("settle: submit %s %s: record intent: %w", channelAddress, amount, err)
-	}
-	rec.Channel = channelAddress
-	rec.CumulativeAmount = amount
-	rec.Status = "submitting"
 
 	hash, sendErr := channel.Settle(ctx, signer, amount, sig)
 	if sendErr != nil {
+		// A single-attempt Submit marks any send failure final —
+		// permanent or not. A caller that wants transient failures
+		// retried without prematurely closing out this (channel, amount)
+		// as failed should use SubmitWithRetry instead, which manages
+		// this same row's lifecycle across attempts rather than settling
+		// it after just one.
 		if markErr := s.markFailed(ctx, rec.ID, hash, sendErr.Error()); markErr != nil {
 			return nil, fmt.Errorf("settle: submit %s %s: send failed (%v) and marking it failed also failed: %w",
 				channelAddress, amount, sendErr, markErr)
@@ -207,7 +178,7 @@ func (s *Submitter) Submit(ctx context.Context, channel ChannelSettler, signer *
 		rec.Status = "failed"
 		rec.TxHash = hash
 		rec.FailureReason = sendErr.Error()
-		return &rec, fmt.Errorf("settle: submit %s %s: %w", channelAddress, amount, sendErr)
+		return rec, fmt.Errorf("settle: submit %s %s: %w", channelAddress, amount, sendErr)
 	}
 
 	if err := s.markConfirmed(ctx, rec.ID, hash); err != nil {
@@ -215,7 +186,56 @@ func (s *Submitter) Submit(ctx context.Context, channel ChannelSettler, signer *
 	}
 	rec.Status = "confirmed"
 	rec.TxHash = hash
-	return &rec, nil
+	return rec, nil
+}
+
+// recordOrFindIntent is the shared find-or-record-intent step both Submit
+// and SubmitWithRetry use: if a row already exists for (channelAddress,
+// amount), it's returned with resolved=true (the caller does not proceed
+// to call the chain — Submit and SubmitWithRetry each decide what "already
+// exists" means for their own semantics). Otherwise a fresh 'submitting'
+// row is written, durably, before returning — §6 ordering rule 3 — along
+// with the commitment's own signature, ready for the caller's chain call.
+func (s *Submitter) recordOrFindIntent(ctx context.Context, channelAddress string, amount *big.Int) (rec *Record, sig [64]byte, resolved bool, err error) {
+	if amount == nil {
+		return nil, sig, false, errors.New("settle: submit: amount is nil")
+	}
+	amountNum := pgtype.Numeric{Int: new(big.Int).Set(amount), Exp: 0, Valid: true}
+
+	existing, err := s.find(ctx, channelAddress, amountNum)
+	if err != nil {
+		return nil, sig, false, err
+	}
+	if existing != nil {
+		return existing, sig, true, nil
+	}
+
+	sig, err = s.lookupCommitmentSignature(ctx, channelAddress, amountNum)
+	if err != nil {
+		return nil, sig, false, fmt.Errorf("settle: submit %s %s: %w", channelAddress, amount, err)
+	}
+
+	var fresh Record
+	err = s.pool.QueryRow(ctx, insertSettlementSQL, channelAddress, amountNum).Scan(&fresh.ID, &fresh.SubmittedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Lost a race with a concurrent caller for the same key between
+		// find and here. Re-fetch and treat it as already existing.
+		again, findErr := s.find(ctx, channelAddress, amountNum)
+		if findErr != nil {
+			return nil, sig, false, findErr
+		}
+		if again == nil {
+			return nil, sig, false, fmt.Errorf("settle: submit %s %s: insert conflicted but no row found on re-read", channelAddress, amount)
+		}
+		return again, sig, true, nil
+	}
+	if err != nil {
+		return nil, sig, false, fmt.Errorf("settle: submit %s %s: record intent: %w", channelAddress, amount, err)
+	}
+	fresh.Channel = channelAddress
+	fresh.CumulativeAmount = amount
+	fresh.Status = "submitting"
+	return &fresh, sig, false, nil
 }
 
 func (s *Submitter) markConfirmed(ctx context.Context, id int64, txHash string) error {
