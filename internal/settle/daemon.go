@@ -65,6 +65,7 @@ type Daemon struct {
 	signer         *keypair.Full
 	ledgers        LedgerSource
 	policy         Policy
+	chainRead      chainReadTracker
 }
 
 // NewDaemon returns a Daemon.
@@ -73,6 +74,14 @@ func NewDaemon(pool *pgxpool.Pool, calc *Calculator, submitter *Submitter, chann
 		pool: pool, calc: calc, submitter: submitter, channelFactory: channelFactory,
 		signer: signer, ledgers: ledgers, policy: policy,
 	}
+}
+
+// LastSuccessfulChainRead returns when Tick last successfully read the
+// current ledger from LedgerSource, and whether it has ever succeeded at
+// all (§6's /metrics requirement: "time since the last successful chain
+// read").
+func (d *Daemon) LastSuccessfulChainRead() (time.Time, bool) {
+	return d.chainRead.get()
 }
 
 const watchedChannelsSQL = `
@@ -121,6 +130,7 @@ func (d *Daemon) Tick(ctx context.Context) (attempted int, underDeadlinePressure
 	if err != nil {
 		return 0, false, fmt.Errorf("settle: daemon: current ledger: %w", err)
 	}
+	d.chainRead.recordSuccess(time.Now())
 
 	channels, err := d.watchedChannels(ctx)
 	if err != nil {
