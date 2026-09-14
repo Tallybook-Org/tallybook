@@ -187,7 +187,23 @@ Events: `("statement", "anchor")` with
 1. `anchor` rejects a statement whose period spans a price change —
    `version_at(period_start)` must equal `version_at(period_end)` (`PeriodSpansPriceChange`).
    The collector must close a billing period whenever a new price version takes effect, not
-   only at month end.
+   only at month end. **Both triggers are implemented**, not deferred: a price-version
+   change is caught directly by `internal/meter.PeriodCloser.EnsureOpenPeriod` (closing at
+   the exact version boundary, never the raw observation ledger); the calendar boundary is
+   `internal/meter.PeriodCloser.CloseDuePeriods`, driven by `TB_PERIOD_DURATION` (§7) and
+   run on an interval via `PeriodCloser.Run`. Both share one boundary-computation helper
+   (`closeBoundaryFor`) so a calendar-triggered close still can't produce a period spanning
+   more than one price version, even if the version has also moved on in the meantime.
+
+   Anchoring itself is idempotent and crash-safe, following §6's own ordering rules 3 and 4
+   (record intent before submitting; idempotent by construction) even though those rules are
+   written for the settler specifically — `internal/meter.Anchorer.AnchorPeriod` records a
+   `submitting` `anchor_attempts` row before ever calling `anchor`, and
+   `Anchorer.ReconcileAnchoring` resolves an unresolved one on restart by recomputing the
+   same merkle usage root and matching it, by content, against every statement
+   `list_statements` returns — `anchor`'s return value (the sequence number) isn't known
+   until the call has already succeeded, so there's no key to look up directly the way the
+   settler checks a channel's live balance.
 2. `resolve_dispute` requires **both** the operator's and the consumer's authorization.
    `stellar-cli` 28.0.0 cannot produce the second party's Soroban authorization entry —
    this is verified, not theoretical. You must construct and sign authorization entries
@@ -398,6 +414,7 @@ naming the missing variable — never start with a zero value.
 | `TB_SAFETY_MARGIN_LEDGERS` | `1440` | Settler deadline margin |
 | `TB_MAX_EXPOSURE` | `10000000` | Stroops; triggers a sweep |
 | `TB_MAX_EXPOSURE_AGE` | `24h` | Duration |
+| `TB_PERIOD_DURATION` | `720h` | How long a billing period may stay open before it's closed on calendar grounds alone (§4's "not only at month end"), independent of any price change |
 | `TB_SETTLER_TICK` | `30s` | Poll interval |
 | `TB_INDEXER_START_LEDGER` | `4590000` | Where ingestion begins |
 | `TB_COLLECTOR_ADDR` | `:8080` | Listen address |
