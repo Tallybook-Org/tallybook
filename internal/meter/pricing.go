@@ -98,6 +98,31 @@ func (c *Catalog) VersionAt(ledger uint32) (*CatalogVersion, error) {
 		ErrNoVersionAt, ledger, c.versions[0].EffectiveLedger)
 }
 
+// EffectiveLedgerAfter returns the effective ledger of the version that
+// immediately follows version (by EffectiveLedger order), and whether one
+// exists at all — false if version is unknown to this catalog, or is the
+// latest one in it.
+//
+// This exists for period closing (internal/meter's PeriodCloser): when a
+// period opened under version needs to close because the catalog has
+// since moved on, the correct closing boundary is the ledger just before
+// the version that came right after version — not the ledger of
+// whichever version happens to be current now, which could be several
+// versions further along if nothing was observed in between. Using
+// "current now" there would make the closed period's own range span
+// multiple versions, exactly the invariant closing exists to prevent.
+func (c *Catalog) EffectiveLedgerAfter(version uint32) (uint32, bool) {
+	for i, v := range c.versions {
+		if v.Version == version {
+			if i+1 < len(c.versions) {
+				return c.versions[i+1].EffectiveLedger, true
+			}
+			return 0, false
+		}
+	}
+	return 0, false
+}
+
 // PricedRequest is the result of pricing one request: everything a
 // requests row (§5) needs from the pricing step specifically.
 type PricedRequest struct {
