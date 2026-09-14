@@ -24,6 +24,7 @@ func validEnv() map[string]string {
 		envSafetyMarginLedgers:  "1440",
 		envMaxExposure:          "10000000",
 		envMaxExposureAge:       "24h",
+		envPeriodDuration:       "720h",
 		envSettlerTick:          "30s",
 		envIndexerStartLedger:   "4590000",
 		envCollectorAddr:        ":8080",
@@ -54,6 +55,9 @@ func TestLoad_Valid(t *testing.T) {
 	}
 	if cfg.MaxExposureAge != 24*time.Hour {
 		t.Errorf("MaxExposureAge = %s, want 24h", cfg.MaxExposureAge)
+	}
+	if cfg.PeriodDuration != 720*time.Hour {
+		t.Errorf("PeriodDuration = %s, want 720h", cfg.PeriodDuration)
 	}
 	if cfg.SettlerTick != 30*time.Second {
 		t.Errorf("SettlerTick = %s, want 30s", cfg.SettlerTick)
@@ -182,6 +186,7 @@ func TestLoad_MissingRequired(t *testing.T) {
 		envOperatorSecret,
 		envMaxExposure,
 		envMaxExposureAge,
+		envPeriodDuration,
 		envSettlerTick,
 		envIndexerStartLedger,
 		envCollectorAddr,
@@ -277,6 +282,20 @@ func TestLoad_InvalidValues(t *testing.T) {
 				env[envMaxExposureAge] = "0s"
 			},
 			wantErr: envMaxExposureAge,
+		},
+		{
+			name: "period duration not a duration",
+			mutate: func(env map[string]string) {
+				env[envPeriodDuration] = "thirty days"
+			},
+			wantErr: envPeriodDuration,
+		},
+		{
+			name: "period duration zero",
+			mutate: func(env map[string]string) {
+				env[envPeriodDuration] = "0h"
+			},
+			wantErr: envPeriodDuration,
 		},
 		{
 			name: "settler tick not a duration",
