@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt fmt-check staticcheck lint check tidy up down up-all down-all
+.PHONY: build test test-ci vet fmt fmt-check staticcheck lint check tidy up down up-all down-all
 
 GOFILES := $(shell find . -name '*.go' -not -path './vendor/*')
 
@@ -6,7 +6,11 @@ build:
 	go build ./...
 
 test:
-	go test ./...
+	go test ./... -count=1
+
+# CI must exercise the Postgres tests, rather than silently skip them.
+test-ci:
+	bash scripts/test-ci.sh
 
 vet:
 	go vet ./...
