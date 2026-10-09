@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -103,23 +104,45 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 // Migrate is safe to call on every service startup: migrations already
 // recorded are skipped, so a fresh database and one that's already current
 // both converge to the same schema.
-func Migrate(ctx context.Context, pool *pgxpool.Pool, migrations []Migration) ([]Migration, error) {
-	if _, err := pool.Exec(ctx, createTrackingTableSQL); err != nil {
+func Migrate(ctx context.Context, pool *pgxpool.Pool, migrations []Migration) (newlyApplied []Migration, resultErr error) {
+	// All services migrate the same database on startup. Keep a session lock
+	// across the batch, including creation of the tracking table, so another
+	// process cannot read stale bookkeeping and apply the same DDL.
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("store: acquire migration connection: %w", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(724019832)`); err != nil {
+		// A cancelled response can leave lock ownership uncertain.
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return nil, errors.Join(fmt.Errorf("store: lock migrations: %w", err), conn.Hijack().Close(closeCtx))
+	}
+	defer func() {
+		unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(unlockCtx, `SELECT pg_advisory_unlock(724019832)`); err != nil {
+			// Never return a connection carrying a session lock to the pool.
+			closeErr := conn.Hijack().Close(unlockCtx)
+			resultErr = errors.Join(resultErr, fmt.Errorf("store: unlock migrations: %w", err), closeErr)
+		}
+	}()
+	if _, err := conn.Exec(ctx, createTrackingTableSQL); err != nil {
 		return nil, fmt.Errorf("store: create schema_migrations tracking table: %w", err)
 	}
 
-	applied, err := appliedVersions(ctx, pool)
+	applied, err := appliedVersions(ctx, conn)
 	if err != nil {
 		return nil, err
 	}
 
-	var newlyApplied []Migration
 	for _, m := range migrations {
 		if applied[m.Version] {
 			continue
 		}
 
-		tx, err := pool.Begin(ctx)
+		tx, err := conn.Begin(ctx)
 		if err != nil {
 			return newlyApplied, fmt.Errorf("store: begin transaction for migration %s: %w", m.Filename, err)
 		}
@@ -144,7 +167,7 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, migrations []Migration) ([
 	return newlyApplied, nil
 }
 
-func appliedVersions(ctx context.Context, pool *pgxpool.Pool) (map[int]bool, error) {
+func appliedVersions(ctx context.Context, pool *pgxpool.Conn) (map[int]bool, error) {
 	rows, err := pool.Query(ctx, `SELECT version FROM schema_migrations`)
 	if err != nil {
 		return nil, fmt.Errorf("store: query applied migrations: %w", err)

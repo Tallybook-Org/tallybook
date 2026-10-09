@@ -216,3 +216,36 @@ func TestMigrate_NoMigrationsIsANoop(t *testing.T) {
 		t.Errorf("Migrate applied %d migrations from an empty set, want 0", len(applied))
 	}
 }
+
+func TestMigrate_ConcurrentStartups(t *testing.T) {
+	pool := testPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	migrations := []Migration{{Version: 1, Name: "concurrent", Filename: "0001_concurrent.sql",
+		SQL: `SELECT pg_sleep(0.1); CREATE TABLE concurrent_widgets (id INTEGER PRIMARY KEY)`}}
+	type outcome struct {
+		applied []Migration
+		err     error
+	}
+	results := make(chan outcome, 4)
+	start := make(chan struct{})
+	for range 4 {
+		go func() {
+			<-start
+			applied, err := Migrate(ctx, pool, migrations)
+			results <- outcome{applied, err}
+		}()
+	}
+	close(start)
+	total := 0
+	for range 4 {
+		result := <-results
+		if result.err != nil {
+			t.Errorf("concurrent migration: %v", result.err)
+		}
+		total += len(result.applied)
+	}
+	if total != 1 {
+		t.Errorf("applied %d migrations across startups, want 1", total)
+	}
+}
