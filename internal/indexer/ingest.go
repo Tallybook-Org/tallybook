@@ -265,11 +265,13 @@ ON CONFLICT (event_id) DO NOTHING`
 // persistEvent inserts one classified event. For KindStatementAnchor it
 // also decodes the event's value to populate chain_events' denormalized
 // operator/consumer/seq/amount_billed/amount_settled columns (see
-// 0005_chain_events.sql) — every other kind leaves them NULL.
-func persistEvent(ctx context.Context, tx pgx.Tx, ev stellar.EventInfo, kind Kind) error {
+// 0005_chain_events.sql) — every other kind leaves them NULL. It reports
+// whether a new row was inserted so replayed events cannot reapply channel
+// state changes, especially incremental withdrawals.
+func persistEvent(ctx context.Context, tx pgx.Tx, ev stellar.EventInfo, kind Kind) (bool, error) {
 	closedAt, err := time.Parse(time.RFC3339, ev.LedgerClosedAt)
 	if err != nil {
-		return fmt.Errorf("indexer: parse ledgerClosedAt %q: %w", ev.LedgerClosedAt, err)
+		return false, fmt.Errorf("indexer: parse ledgerClosedAt %q: %w", ev.LedgerClosedAt, err)
 	}
 
 	var operator, consumer *string
@@ -280,7 +282,7 @@ func persistEvent(ctx context.Context, tx pgx.Tx, ev stellar.EventInfo, kind Kin
 	if kind == KindStatementAnchor {
 		decoded, err := stellar.DecodeStatementAnchorEvent(ev.Value)
 		if err != nil {
-			return fmt.Errorf("indexer: decode statement anchor event: %w", err)
+			return false, fmt.Errorf("indexer: decode statement anchor event: %w", err)
 		}
 		operator = &decoded.Operator
 		consumer = &decoded.Consumer
@@ -290,13 +292,14 @@ func persistEvent(ctx context.Context, tx pgx.Tx, ev stellar.EventInfo, kind Kin
 		amountSettled = pgtype.Numeric{Int: decoded.AmountSettled, Exp: 0, Valid: true}
 	}
 
-	if _, err := tx.Exec(ctx, insertChainEventSQL,
+	tag, err := tx.Exec(ctx, insertChainEventSQL,
 		ev.ID, ev.Ledger, closedAt, ev.ContractID, ev.TxHash, ev.Topic, string(kind), ev.Value,
 		operator, consumer, seq, amountBilled, amountSettled,
-	); err != nil {
-		return fmt.Errorf("indexer: insert chain event: %w", err)
+	)
+	if err != nil {
+		return false, fmt.Errorf("indexer: insert chain event: %w", err)
 	}
-	return nil
+	return tag.RowsAffected() == 1, nil
 }
 
 // Tick runs one ingestion cycle: fetch events since the last persisted
@@ -356,8 +359,12 @@ func (ix *Ingestor) Tick(ctx context.Context) (int, error) {
 				"event_id", ev.ID, "contract_id", ev.ContractID, "ledger", ev.Ledger, "error", err)
 			continue
 		}
-		if err := persistEvent(ctx, tx, ev, kind); err != nil {
+		inserted, err := persistEvent(ctx, tx, ev, kind)
+		if err != nil {
 			return persisted, fmt.Errorf("indexer: event %s: %w", ev.ID, err)
+		}
+		if !inserted {
+			continue
 		}
 		if err := applyChannelEvent(ctx, tx, ev, kind, ix.operatorAddress); err != nil {
 			return persisted, fmt.Errorf("indexer: event %s: %w", ev.ID, err)

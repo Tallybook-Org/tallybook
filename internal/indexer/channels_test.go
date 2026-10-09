@@ -432,3 +432,151 @@ func TestApplyChannelRefund_UnknownChannelWarnsButDoesNotFail(t *testing.T) {
 		t.Errorf("channels has %d rows, want 0", count)
 	}
 }
+
+func TestIngestor_Tick_ReplayedWithdrawalDoesNotChangeBalance(t *testing.T) {
+	for _, samePage := range []bool{false, true} {
+		t.Run(fmt.Sprintf("same_page=%t", samePage), func(t *testing.T) {
+			pool := testIndexerPool(t)
+			withdraw := withdrawEventInfo(t, 1010, 1000)
+			first := []stellar.EventInfo{openEventInfo(t, 1000, 5000, 1440), withdraw}
+			results := []*stellar.GetEventsResult{{Events: first, Cursor: "C1"}}
+			if samePage {
+				results[0].Events = append(first, withdraw)
+			} else {
+				results = append(results, &stellar.GetEventsResult{Events: []stellar.EventInfo{withdraw}, Cursor: "C2"})
+			}
+			ix := newTestIngestor(t, pool, &fakeEventsSource{results: results})
+			for range len(results) {
+				if _, err := ix.Tick(context.Background()); err != nil {
+					t.Fatalf("Tick: %v", err)
+				}
+			}
+			var withdrawn, settled string
+			var ledger uint32
+			if err := pool.QueryRow(context.Background(),
+				`SELECT withdrawn::text, last_settled_amount::text, last_settled_ledger FROM channels WHERE address = $1`,
+				testChannelAddress).Scan(&withdrawn, &settled, &ledger); err != nil {
+				t.Fatalf("query channel: %v", err)
+			}
+			if withdrawn != "1000" || settled != "1000" || ledger != 1010 {
+				t.Errorf("replayed withdrawal produced withdrawn=%s settled=%s ledger=%d, want 1000, 1000, 1010", withdrawn, settled, ledger)
+			}
+			var cursor string
+			if err := pool.QueryRow(context.Background(), `SELECT cursor FROM indexer_cursors WHERE name = $1`, cursorName).Scan(&cursor); err != nil {
+				t.Fatalf("query cursor: %v", err)
+			}
+			if cursor != results[len(results)-1].Cursor {
+				t.Errorf("cursor=%q, want %q", cursor, results[len(results)-1].Cursor)
+			}
+		})
+	}
+}
+
+func TestIngestor_Tick_ReplayedCloseDoesNotReopenRefundedChannel(t *testing.T) {
+	pool := testIndexerPool(t)
+	closeEvent := closeEventInfo(t, 1010, 1010)
+	ix := newTestIngestor(t, pool, &fakeEventsSource{results: []*stellar.GetEventsResult{
+		{Events: []stellar.EventInfo{openEventInfo(t, 1000, 5000, 10), closeEvent, refundEventInfo(t, 1020, 5000)}, Cursor: "C1"},
+		{Events: []stellar.EventInfo{closeEvent}, Cursor: "C2"},
+	}})
+	for range 2 {
+		if _, err := ix.Tick(context.Background()); err != nil {
+			t.Fatalf("Tick: %v", err)
+		}
+	}
+	var status string
+	if err := pool.QueryRow(context.Background(), `SELECT status FROM channels WHERE address = $1`, testChannelAddress).Scan(&status); err != nil {
+		t.Fatalf("query channel: %v", err)
+	}
+	if status != "refunded" {
+		t.Errorf("status after replay=%q, want refunded", status)
+	}
+}
+
+func TestIngestor_Tick_RolledBackWithdrawalCanBeRetried(t *testing.T) {
+	pool := testIndexerPool(t)
+	withdraw := withdrawEventInfo(t, 1010, 1000)
+	badRefund := refundEventInfo(t, 1020, 4000)
+	badRefund.Value = "invalid-xdr"
+	ix := newTestIngestor(t, pool, &fakeEventsSource{results: []*stellar.GetEventsResult{
+		{Events: []stellar.EventInfo{openEventInfo(t, 1000, 5000, 10)}, Cursor: "C1"},
+		{Events: []stellar.EventInfo{withdraw, badRefund}, Cursor: "C2"},
+		{Events: []stellar.EventInfo{withdraw}, Cursor: "C3"},
+	}})
+	ctx := context.Background()
+	if _, err := ix.Tick(ctx); err != nil {
+		t.Fatalf("open channel: %v", err)
+	}
+	if _, err := ix.Tick(ctx); err == nil {
+		t.Fatal("malformed refund unexpectedly succeeded")
+	}
+	var withdrawn, cursor string
+	if err := pool.QueryRow(ctx, `SELECT withdrawn::text FROM channels WHERE address = $1`, testChannelAddress).Scan(&withdrawn); err != nil {
+		t.Fatalf("query balance after rollback: %v", err)
+	}
+	if withdrawn != "0" {
+		t.Errorf("withdrawn after rollback=%s, want 0", withdrawn)
+	}
+	if err := pool.QueryRow(ctx, `SELECT cursor FROM indexer_cursors WHERE name = $1`, cursorName).Scan(&cursor); err != nil {
+		t.Fatalf("query cursor after rollback: %v", err)
+	}
+	if cursor != "C1" {
+		t.Errorf("cursor after rollback=%q, want C1", cursor)
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM chain_events WHERE event_id = $1`, withdraw.ID).Scan(&count); err != nil {
+		t.Fatalf("query rolled back event: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("rolled back event count=%d, want 0", count)
+	}
+	if n, err := ix.Tick(ctx); err != nil || n != 1 {
+		t.Fatalf("retry withdrawal: count=%d err=%v, want 1 and nil", n, err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT withdrawn::text FROM channels WHERE address = $1`, testChannelAddress).Scan(&withdrawn); err != nil {
+		t.Fatalf("query balance after retry: %v", err)
+	}
+	if withdrawn != "1000" {
+		t.Errorf("withdrawn after retry=%s, want 1000", withdrawn)
+	}
+}
+
+func TestIngestor_Tick_ConcurrentDuplicateWithdrawalAppliedOnce(t *testing.T) {
+	pool := testIndexerPool(t)
+	ctx := context.Background()
+	events := []stellar.EventInfo{openEventInfo(t, 1000, 5000, 10), withdrawEventInfo(t, 1010, 1000)}
+	type outcome struct {
+		count int
+		err   error
+	}
+	outcomes := make(chan outcome, 2)
+	start := make(chan struct{})
+	for range 2 {
+		ix := newTestIngestor(t, pool, &fakeEventsSource{results: []*stellar.GetEventsResult{{Events: events, Cursor: "C1"}}})
+		go func() {
+			<-start
+			n, err := ix.Tick(ctx)
+			outcomes <- outcome{n, err}
+		}()
+	}
+	close(start)
+	total := 0
+	for range 2 {
+		r := <-outcomes
+		if r.err != nil {
+			t.Errorf("concurrent Tick: %v", r.err)
+		}
+		total += r.count
+	}
+	if total != 2 {
+		t.Errorf("total inserted events=%d, want 2", total)
+	}
+	var withdrawn, settled string
+	if err := pool.QueryRow(ctx,
+		`SELECT withdrawn::text, last_settled_amount::text FROM channels WHERE address = $1`, testChannelAddress).Scan(&withdrawn, &settled); err != nil {
+		t.Fatalf("query channel: %v", err)
+	}
+	if withdrawn != "1000" || settled != "1000" {
+		t.Errorf("concurrent replay produced withdrawn=%s settled=%s, want 1000 and 1000", withdrawn, settled)
+	}
+}
