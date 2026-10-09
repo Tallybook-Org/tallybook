@@ -405,8 +405,8 @@ func TestIngestor_Tick_DuplicateEventIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second Tick returned unexpected error: %v", err)
 	}
-	if n2 != 1 {
-		t.Fatalf("second Tick reported persisting %d, want 1 (it still processes the row, just as a no-op insert)", n2)
+	if n2 != 0 {
+		t.Fatalf("second Tick reported persisting %d, want 0 for a duplicate event", n2)
 	}
 
 	var count int
