@@ -60,6 +60,16 @@ func ExampleScvAddress() {
 	// GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX
 }
 
+func ExampleErrWrongScValType_Error() {
+	err := &ErrWrongScValType{
+		Want: xdr.ScValTypeScvU32,
+		Got:  xdr.ScValTypeScvString,
+	}
+	fmt.Println(err.Error())
+	// Output:
+	// stellar: expected ScVal type ScValTypeScvU32, got ScValTypeScvString
+}
+
 func TestScvU32_RoundTrip(t *testing.T) {
 	for _, v := range []uint32{0, 1, 42, 1 << 31, 1<<32 - 1} {
 		got, err := DecodeU32(ScvU32(v))
