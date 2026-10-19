@@ -69,8 +69,45 @@ func TestLoad_Valid(t *testing.T) {
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Errorf("LogLevel = %v, want info", cfg.LogLevel)
 	}
+	if cfg.HTTPReadHeaderTimeout != defaultHTTPReadHeaderTimeout || cfg.HTTPReadTimeout != defaultHTTPReadTimeout ||
+		cfg.HTTPWriteTimeout != defaultHTTPWriteTimeout || cfg.HTTPIdleTimeout != defaultHTTPIdleTimeout {
+		t.Errorf("HTTP timeouts = (%s, %s, %s, %s), want defaults (%s, %s, %s, %s)",
+			cfg.HTTPReadHeaderTimeout, cfg.HTTPReadTimeout, cfg.HTTPWriteTimeout, cfg.HTTPIdleTimeout,
+			defaultHTTPReadHeaderTimeout, defaultHTTPReadTimeout, defaultHTTPWriteTimeout, defaultHTTPIdleTimeout)
+	}
+	if cfg.IndexerMaxConsecutiveFailures != defaultIndexerMaxConsecutiveFailures {
+		t.Errorf("IndexerMaxConsecutiveFailures = %d, want %d", cfg.IndexerMaxConsecutiveFailures, defaultIndexerMaxConsecutiveFailures)
+	}
 	if cfg.OperatorSecret.Reveal() != "S"+strings.Repeat("E", 55) {
 		t.Errorf("OperatorSecret.Reveal() did not round-trip")
+	}
+}
+
+func TestLoad_HTTPTimeoutOverrides(t *testing.T) {
+	env := validEnv()
+	env[envHTTPReadHeaderTimeout] = "3s"
+	env[envHTTPReadTimeout] = "45s"
+	env[envHTTPWriteTimeout] = "4m"
+	env[envHTTPIdleTimeout] = "90s"
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+	if cfg.HTTPReadHeaderTimeout != 3*time.Second || cfg.HTTPReadTimeout != 45*time.Second ||
+		cfg.HTTPWriteTimeout != 4*time.Minute || cfg.HTTPIdleTimeout != 90*time.Second {
+		t.Errorf("HTTP timeout overrides were not applied: %+v", cfg)
+	}
+}
+
+func TestLoad_IndexerFailureThreshold(t *testing.T) {
+	env := validEnv()
+	env[envIndexerMaxConsecutiveFailures] = "5"
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+	if cfg.IndexerMaxConsecutiveFailures != 5 {
+		t.Errorf("IndexerMaxConsecutiveFailures = %d, want 5", cfg.IndexerMaxConsecutiveFailures)
 	}
 }
 
@@ -304,6 +341,27 @@ func TestLoad_InvalidValues(t *testing.T) {
 				env[envSettlerTick] = "thirty seconds"
 			},
 			wantErr: envSettlerTick,
+		},
+		{
+			name: "http header timeout is zero",
+			mutate: func(env map[string]string) {
+				env[envHTTPReadHeaderTimeout] = "0s"
+			},
+			wantErr: envHTTPReadHeaderTimeout,
+		},
+		{
+			name: "http write timeout is invalid",
+			mutate: func(env map[string]string) {
+				env[envHTTPWriteTimeout] = "slow"
+			},
+			wantErr: envHTTPWriteTimeout,
+		},
+		{
+			name: "indexer failure threshold is zero",
+			mutate: func(env map[string]string) {
+				env[envIndexerMaxConsecutiveFailures] = "0"
+			},
+			wantErr: envIndexerMaxConsecutiveFailures,
 		},
 		{
 			name: "indexer start ledger not a uint32",

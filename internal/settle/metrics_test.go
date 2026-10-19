@@ -3,9 +3,16 @@ package settle
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/Tallybook-Org/tallybook/internal/httpserver"
 )
 
 func serveMetrics(t *testing.T, m *Metrics) string {
@@ -182,5 +189,62 @@ func TestMetrics_ContentType(t *testing.T) {
 
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
 		t.Errorf("Content-Type = %q, want a text/plain prefix", ct)
+	}
+}
+
+func TestMetricsConcurrentReadersServeWithinTimeout(t *testing.T) {
+	pool := testSettlePool(t)
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", NewMetrics(pool, fakeLedgerSource{ledger: 100}, nil))
+	srv, err := httpserver.New("127.0.0.1:0", mux, httpserver.Timeouts{
+		ReadHeader: time.Second,
+		Read:       time.Second,
+		Write:      3 * time.Second,
+		Idle:       time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.Serve(listener) }()
+	t.Cleanup(func() {
+		if err := srv.Close(); err != nil && err != http.ErrServerClosed {
+			t.Errorf("close metrics server: %v", err)
+		}
+		<-serveErr
+	})
+
+	const readers = 16
+	client := &http.Client{Timeout: 2 * time.Second}
+	var wg sync.WaitGroup
+	errCh := make(chan error, readers)
+	for range readers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := client.Get("http://" + listener.Addr().String() + "/metrics")
+			if err != nil {
+				errCh <- err
+				return
+			}
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "tallybook_settle_open_channels") {
+				errCh <- errors.New("metrics response was incomplete")
+			}
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Errorf("concurrent metrics request failed: %v", err)
 	}
 }

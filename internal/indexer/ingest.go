@@ -127,6 +127,7 @@ type Ingestor struct {
 	operatorAddress     string
 	startLedger         uint32
 	pageLimit           uint32
+	status              ingestionStatus
 }
 
 // New validates cfg and returns an Ingestor. Returning an error rather
@@ -143,6 +144,12 @@ func New(cfg Config) (*Ingestor, error) {
 		operatorAddress: cfg.OperatorAddress,
 		startLedger:     cfg.StartLedger, pageLimit: cfg.PageLimit,
 	}, nil
+}
+
+// ConsecutiveTickFailures returns the number of consecutive unsuccessful
+// ingestion polls since the most recent successful poll.
+func (ix *Ingestor) ConsecutiveTickFailures() uint64 {
+	return ix.status.snapshot().consecutiveFailures
 }
 
 // ErrInvalidConfig is returned by New when cfg is missing a required
@@ -324,10 +331,19 @@ func persistEvent(ctx context.Context, tx pgx.Tx, ev stellar.EventInfo, kind Kin
 // inserts) is a harmless no-op via chain_events' own
 // ON CONFLICT (event_id) DO NOTHING.
 func (ix *Ingestor) Tick(ctx context.Context) (int, error) {
-	cursor, _, err := ix.loadCursor(ctx)
+	var cursorAdvanced bool
+	var cursorLedger uint32
+	persisted, err := ix.tick(ctx, &cursorAdvanced, &cursorLedger)
+	ix.status.recordTick(err, cursorAdvanced, cursorLedger)
+	return persisted, err
+}
+
+func (ix *Ingestor) tick(ctx context.Context, cursorAdvanced *bool, cursorLedger *uint32) (int, error) {
+	cursor, ledger, err := ix.loadCursor(ctx)
 	if err != nil {
 		return 0, err
 	}
+	*cursorLedger = ledger
 
 	filters, err := ix.filters()
 	if err != nil {
@@ -394,6 +410,8 @@ func (ix *Ingestor) Tick(ctx context.Context) (int, error) {
 	if err := tx.Commit(ctx); err != nil {
 		return persisted, fmt.Errorf("indexer: commit tick: %w", err)
 	}
+	*cursorAdvanced = newCursor != cursor
+	*cursorLedger = lastLedger
 	return persisted, nil
 }
 
