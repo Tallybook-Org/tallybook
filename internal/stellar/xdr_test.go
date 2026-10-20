@@ -55,6 +55,26 @@ func ExampleScvSymbol() {
 	// price_v
 }
 
+func ExampleDecodeSymbol() {
+	v, err := DecodeSymbol(ScvSymbol("anchor"))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// anchor
+}
+
+func ExampleDecodeString() {
+	v, err := DecodeString(ScvString("price/v1.json"))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// price/v1.json
+}
+
 func ExampleScvAddress() {
 	addr := "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX"
 	v, err := ScvAddress(addr)
