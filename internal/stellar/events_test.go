@@ -76,6 +76,25 @@ func ExampleMatchesTopic() {
 	// Output: true
 }
 
+func ExampleDecodeStatementDisputeEvent() {
+	// A genuine ("statement", "dispute") event's Value, captured live
+	// from testnet (tx ecbafcd85fc10381, fixture events_statement_registry).
+	const disputeValueB64 = "AAAAEAAAAAEAAAAEAAAAEgAAAAAAAAAAaSue9e7ifQ7u45Obpx8FFiCUrvDOYAF+ur/wm7XTZE0AAAASAAAAAAAAAACtXWITvZ/9QnTuL9KzW/xEfHokr4K/TUEhRQ7HUBTv7wAAAAUAAAAAAAAAAgAAAA0AAAAgef6xLgsPk8jiZXvgRxL+ABu7LhG/XfXOXz5vKemhjoU="
+	ev, err := DecodeStatementDisputeEvent(disputeValueB64)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("operator:", ev.Operator)
+	fmt.Println("consumer:", ev.Consumer)
+	fmt.Println("seq:", ev.Seq)
+	fmt.Printf("reason_hash: %x\n", ev.ReasonHash)
+	// Output:
+	// operator: GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A
+	// consumer: GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG
+	// seq: 2
+	// reason_hash: 79feb12e0b0f93c8e2657be04712fe001bbb2e11bf5df5ce5f3e6f29e9a18e85
+}
+
 // TestDecodePriceBookPublishEvent_AgainstRealEvents decodes two genuine
 // price_book publish events captured live from testnet — one from this
 // package's own pricebook_test.go capture run, one from an earlier
