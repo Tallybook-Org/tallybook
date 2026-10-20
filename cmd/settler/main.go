@@ -25,6 +25,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/keypair"
 
 	"github.com/Tallybook-Org/tallybook/internal/config"
+	"github.com/Tallybook-Org/tallybook/internal/httpserver"
 	"github.com/Tallybook-Org/tallybook/internal/settle"
 	"github.com/Tallybook-Org/tallybook/internal/stellar"
 	"github.com/Tallybook-Org/tallybook/internal/store"
@@ -112,7 +113,15 @@ func run(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	srv := &http.Server{Addr: metricsAddr, Handler: mux}
+	srv, err := httpserver.New(metricsAddr, mux, httpserver.Timeouts{
+		ReadHeader: cfg.HTTPReadHeaderTimeout,
+		Read:       cfg.HTTPReadTimeout,
+		Write:      cfg.HTTPWriteTimeout,
+		Idle:       cfg.HTTPIdleTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("construct HTTP server: %w", err)
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)

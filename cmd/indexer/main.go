@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Tallybook-Org/tallybook/internal/config"
+	"github.com/Tallybook-Org/tallybook/internal/httpserver"
 	"github.com/Tallybook-Org/tallybook/internal/indexer"
 	"github.com/Tallybook-Org/tallybook/internal/stellar"
 	"github.com/Tallybook-Org/tallybook/internal/store"
@@ -91,6 +92,7 @@ func run(ctx context.Context) error {
 	}
 
 	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", indexer.NewMetrics(ix))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
@@ -100,10 +102,22 @@ func run(ctx context.Context) error {
 			http.Error(w, "database not ready: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
+		if failures := ix.ConsecutiveTickFailures(); failures >= uint64(cfg.IndexerMaxConsecutiveFailures) {
+			http.Error(w, fmt.Sprintf("indexer ingestion unhealthy: %d consecutive tick failures", failures), http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	srv := &http.Server{Addr: healthAddr, Handler: mux}
+	srv, err := httpserver.New(healthAddr, mux, httpserver.Timeouts{
+		ReadHeader: cfg.HTTPReadHeaderTimeout,
+		Read:       cfg.HTTPReadTimeout,
+		Write:      cfg.HTTPWriteTimeout,
+		Idle:       cfg.HTTPIdleTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("construct HTTP server: %w", err)
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)

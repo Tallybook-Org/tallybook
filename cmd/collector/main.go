@@ -34,6 +34,7 @@ import (
 
 	"github.com/Tallybook-Org/tallybook/internal/config"
 	"github.com/Tallybook-Org/tallybook/internal/httpapi"
+	"github.com/Tallybook-Org/tallybook/internal/httpserver"
 	"github.com/Tallybook-Org/tallybook/internal/stellar"
 	"github.com/Tallybook-Org/tallybook/internal/store"
 )
@@ -108,7 +109,15 @@ func run(ctx context.Context) error {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	srv := &http.Server{Addr: cfg.CollectorAddr, Handler: mux}
+	srv, err := httpserver.New(cfg.CollectorAddr, mux, httpserver.Timeouts{
+		ReadHeader: cfg.HTTPReadHeaderTimeout,
+		Read:       cfg.HTTPReadTimeout,
+		Write:      cfg.HTTPWriteTimeout,
+		Idle:       cfg.HTTPIdleTimeout,
+	})
+	if err != nil {
+		return fmt.Errorf("construct HTTP server: %w", err)
+	}
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("collector: listening", "addr", cfg.CollectorAddr)

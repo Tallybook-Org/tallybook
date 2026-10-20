@@ -148,8 +148,13 @@ naming it.
 | `TB_PERIOD_DURATION` | `720h` | How long a billing period may stay open before it's closed on calendar grounds alone, independent of any price change |
 | `TB_SETTLER_TICK` | `30s` | Settler poll interval |
 | `TB_INDEXER_START_LEDGER` | `4590000` | Where ingestion begins |
+| `TB_INDEXER_MAX_CONSECUTIVE_FAILURES` | `3` | Consecutive failed polls before indexer readiness fails |
 | `TB_COLLECTOR_ADDR` | `:8080` | Collector listen address |
 | `TB_LOG_LEVEL` | `info` | |
+| `TB_HTTP_READ_HEADER_TIMEOUT` | `5s` | Maximum time to read request headers; protects against slow-header clients |
+| `TB_HTTP_READ_TIMEOUT` | `2m` | Maximum time to read a complete request |
+| `TB_HTTP_WRITE_TIMEOUT` | `5m` | Maximum time to write a response; configurable for slow upstream APIs |
+| `TB_HTTP_IDLE_TIMEOUT` | `2m` | Maximum keep-alive idle time |
 
 Secrets never appear in logs, error messages, metrics labels, or commits
 — enforced by a redacting `Secret` type in `internal/config` and a test

@@ -69,8 +69,45 @@ func TestLoad_Valid(t *testing.T) {
 	if cfg.LogLevel != slog.LevelInfo {
 		t.Errorf("LogLevel = %v, want info", cfg.LogLevel)
 	}
+	if cfg.HTTPReadHeaderTimeout != defaultHTTPReadHeaderTimeout || cfg.HTTPReadTimeout != defaultHTTPReadTimeout ||
+		cfg.HTTPWriteTimeout != defaultHTTPWriteTimeout || cfg.HTTPIdleTimeout != defaultHTTPIdleTimeout {
+		t.Errorf("HTTP timeouts = (%s, %s, %s, %s), want defaults (%s, %s, %s, %s)",
+			cfg.HTTPReadHeaderTimeout, cfg.HTTPReadTimeout, cfg.HTTPWriteTimeout, cfg.HTTPIdleTimeout,
+			defaultHTTPReadHeaderTimeout, defaultHTTPReadTimeout, defaultHTTPWriteTimeout, defaultHTTPIdleTimeout)
+	}
+	if cfg.IndexerMaxConsecutiveFailures != defaultIndexerMaxConsecutiveFailures {
+		t.Errorf("IndexerMaxConsecutiveFailures = %d, want %d", cfg.IndexerMaxConsecutiveFailures, defaultIndexerMaxConsecutiveFailures)
+	}
 	if cfg.OperatorSecret.Reveal() != "S"+strings.Repeat("E", 55) {
 		t.Errorf("OperatorSecret.Reveal() did not round-trip")
+	}
+}
+
+func TestLoad_HTTPTimeoutOverrides(t *testing.T) {
+	env := validEnv()
+	env[envHTTPReadHeaderTimeout] = "3s"
+	env[envHTTPReadTimeout] = "45s"
+	env[envHTTPWriteTimeout] = "4m"
+	env[envHTTPIdleTimeout] = "90s"
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+	if cfg.HTTPReadHeaderTimeout != 3*time.Second || cfg.HTTPReadTimeout != 45*time.Second ||
+		cfg.HTTPWriteTimeout != 4*time.Minute || cfg.HTTPIdleTimeout != 90*time.Second {
+		t.Errorf("HTTP timeout overrides were not applied: %+v", cfg)
+	}
+}
+
+func TestLoad_IndexerFailureThreshold(t *testing.T) {
+	env := validEnv()
+	env[envIndexerMaxConsecutiveFailures] = "5"
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+	if cfg.IndexerMaxConsecutiveFailures != 5 {
+		t.Errorf("IndexerMaxConsecutiveFailures = %d, want 5", cfg.IndexerMaxConsecutiveFailures)
 	}
 }
 
@@ -306,6 +343,27 @@ func TestLoad_InvalidValues(t *testing.T) {
 			wantErr: envSettlerTick,
 		},
 		{
+			name: "http header timeout is zero",
+			mutate: func(env map[string]string) {
+				env[envHTTPReadHeaderTimeout] = "0s"
+			},
+			wantErr: envHTTPReadHeaderTimeout,
+		},
+		{
+			name: "http write timeout is invalid",
+			mutate: func(env map[string]string) {
+				env[envHTTPWriteTimeout] = "slow"
+			},
+			wantErr: envHTTPWriteTimeout,
+		},
+		{
+			name: "indexer failure threshold is zero",
+			mutate: func(env map[string]string) {
+				env[envIndexerMaxConsecutiveFailures] = "0"
+			},
+			wantErr: envIndexerMaxConsecutiveFailures,
+		},
+		{
 			name: "indexer start ledger not a uint32",
 			mutate: func(env map[string]string) {
 				env[envIndexerStartLedger] = "-1"
@@ -498,10 +556,18 @@ func ExampleConfig_String() {
 		IndexerStartLedger:   4590000,
 		CollectorAddr:        ":8080",
 		LogLevel:             slog.LevelInfo,
+		// The HTTP server timeouts and the indexer failure budget are set
+		// here to the same defaults .env.example documents, so the example
+		// shows every field rather than leaving the newest ones at zero.
+		HTTPReadHeaderTimeout:         5 * time.Second,
+		HTTPReadTimeout:               2 * time.Minute,
+		HTTPWriteTimeout:              5 * time.Minute,
+		HTTPIdleTimeout:               2 * time.Minute,
+		IndexerMaxConsecutiveFailures: 3,
 	}
 	fmt.Println(cfg.String())
 	// Output:
-	// Config{DatabaseURL:postgres://tallybook:tallybook@localhost:5432/tallybook StellarRPCURL:https://soroban-testnet.stellar.org NetworkPassphrase:Test SDF Network ; September 2015 PriceBookID:CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA StatementRegistryID:CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA OperatorAddress:GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX OperatorSecretSource:env OperatorSecret:[REDACTED] OperatorSecretPath:[REDACTED] SafetyMarginLedgers:1440 MaxExposure:10000000 MaxExposureAge:24h0m0s PeriodDuration:720h0m0s SettlerTick:30s IndexerStartLedger:4590000 CollectorAddr::8080 LogLevel:INFO}
+	// Config{DatabaseURL:postgres://tallybook:tallybook@localhost:5432/tallybook StellarRPCURL:https://soroban-testnet.stellar.org NetworkPassphrase:Test SDF Network ; September 2015 PriceBookID:CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA StatementRegistryID:CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA OperatorAddress:GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX OperatorSecretSource:env OperatorSecret:[REDACTED] OperatorSecretPath:[REDACTED] SafetyMarginLedgers:1440 MaxExposure:10000000 MaxExposureAge:24h0m0s PeriodDuration:720h0m0s SettlerTick:30s IndexerStartLedger:4590000 CollectorAddr::8080 LogLevel:INFO HTTPReadHeaderTimeout:5s HTTPReadTimeout:2m0s HTTPWriteTimeout:5m0s HTTPIdleTimeout:2m0s IndexerMaxConsecutiveFailures:3}
 }
 
 func ExampleLoadEnv() {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -357,6 +359,52 @@ func TestIngestor_Tick_NoEventsIsANoop(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("indexer_cursors has %d rows after a no-op tick, want 0", count)
+	}
+}
+
+func TestIngestor_TickFailureIsVisibleAndRecoveryResetsReadiness(t *testing.T) {
+	pool := testIndexerPool(t)
+	client := &fakeEventsSource{err: errors.New("rpc unavailable")}
+	ix := newTestIngestor(t, pool, client)
+
+	if _, err := ix.Tick(context.Background()); err == nil {
+		t.Fatal("Tick returned nil error for a failing events source")
+	}
+	if got := ix.ConsecutiveTickFailures(); got != 1 {
+		t.Fatalf("ConsecutiveTickFailures() = %d, want 1", got)
+	}
+	recorder := httptest.NewRecorder()
+	ixMetrics := NewMetrics(ix)
+	ixMetrics.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	if recorder.Code != 200 {
+		t.Fatalf("metrics status = %d, want 200", recorder.Code)
+	}
+	for _, want := range []string{
+		"tallybook_indexer_tick_failures_total 1",
+		"tallybook_indexer_consecutive_tick_failures 1",
+	} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Errorf("metrics response does not contain %q:\n%s", want, recorder.Body.String())
+		}
+	}
+
+	client.err = nil
+	if _, err := ix.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick returned unexpected error after events source recovered: %v", err)
+	}
+	if got := ix.ConsecutiveTickFailures(); got != 0 {
+		t.Fatalf("ConsecutiveTickFailures() after recovery = %d, want 0", got)
+	}
+	recorder = httptest.NewRecorder()
+	ixMetrics.ServeHTTP(recorder, httptest.NewRequest("GET", "/metrics", nil))
+	for _, want := range []string{
+		"tallybook_indexer_tick_failures_total 1",
+		"tallybook_indexer_consecutive_tick_failures 0",
+		"tallybook_indexer_seconds_since_last_successful_tick",
+	} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Errorf("recovered metrics response does not contain %q:\n%s", want, recorder.Body.String())
+		}
 	}
 }
 

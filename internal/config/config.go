@@ -22,23 +22,36 @@ import (
 
 // Environment variable names, exactly as documented in the system prompt.
 const (
-	envDatabaseURL          = "TB_DATABASE_URL"
-	envStellarRPCURL        = "TB_STELLAR_RPC_URL"
-	envNetworkPassphrase    = "TB_NETWORK_PASSPHRASE"
-	envPriceBookID          = "TB_PRICE_BOOK_ID"
-	envStatementRegistryID  = "TB_STATEMENT_REGISTRY_ID"
-	envOperatorAddress      = "TB_OPERATOR_ADDRESS"
-	envOperatorSecretSource = "TB_OPERATOR_SECRET_SOURCE"
-	envOperatorSecret       = "TB_OPERATOR_SECRET"
-	envOperatorSecretPath   = "TB_OPERATOR_SECRET_PATH"
-	envSafetyMarginLedgers  = "TB_SAFETY_MARGIN_LEDGERS"
-	envMaxExposure          = "TB_MAX_EXPOSURE"
-	envMaxExposureAge       = "TB_MAX_EXPOSURE_AGE"
-	envPeriodDuration       = "TB_PERIOD_DURATION"
-	envSettlerTick          = "TB_SETTLER_TICK"
-	envIndexerStartLedger   = "TB_INDEXER_START_LEDGER"
-	envCollectorAddr        = "TB_COLLECTOR_ADDR"
-	envLogLevel             = "TB_LOG_LEVEL"
+	envDatabaseURL                   = "TB_DATABASE_URL"
+	envStellarRPCURL                 = "TB_STELLAR_RPC_URL"
+	envNetworkPassphrase             = "TB_NETWORK_PASSPHRASE"
+	envPriceBookID                   = "TB_PRICE_BOOK_ID"
+	envStatementRegistryID           = "TB_STATEMENT_REGISTRY_ID"
+	envOperatorAddress               = "TB_OPERATOR_ADDRESS"
+	envOperatorSecretSource          = "TB_OPERATOR_SECRET_SOURCE"
+	envOperatorSecret                = "TB_OPERATOR_SECRET"
+	envOperatorSecretPath            = "TB_OPERATOR_SECRET_PATH"
+	envSafetyMarginLedgers           = "TB_SAFETY_MARGIN_LEDGERS"
+	envMaxExposure                   = "TB_MAX_EXPOSURE"
+	envMaxExposureAge                = "TB_MAX_EXPOSURE_AGE"
+	envPeriodDuration                = "TB_PERIOD_DURATION"
+	envSettlerTick                   = "TB_SETTLER_TICK"
+	envIndexerStartLedger            = "TB_INDEXER_START_LEDGER"
+	envCollectorAddr                 = "TB_COLLECTOR_ADDR"
+	envLogLevel                      = "TB_LOG_LEVEL"
+	envHTTPReadHeaderTimeout         = "TB_HTTP_READ_HEADER_TIMEOUT"
+	envHTTPReadTimeout               = "TB_HTTP_READ_TIMEOUT"
+	envHTTPWriteTimeout              = "TB_HTTP_WRITE_TIMEOUT"
+	envHTTPIdleTimeout               = "TB_HTTP_IDLE_TIMEOUT"
+	envIndexerMaxConsecutiveFailures = "TB_INDEXER_MAX_CONSECUTIVE_FAILURES"
+)
+
+const (
+	defaultHTTPReadHeaderTimeout         = 5 * time.Second
+	defaultHTTPReadTimeout               = 2 * time.Minute
+	defaultHTTPWriteTimeout              = 5 * time.Minute
+	defaultHTTPIdleTimeout               = 2 * time.Minute
+	defaultIndexerMaxConsecutiveFailures = 3
 )
 
 // defaultSafetyMarginLedgers is applied when TB_SAFETY_MARGIN_LEDGERS is
@@ -81,11 +94,16 @@ type Config struct {
 	// any price version change (§6: a period also closes "whenever the
 	// price book version changes, not only at month end" — implying a
 	// second, calendar-based trigger exists too; this is it).
-	PeriodDuration     time.Duration
-	SettlerTick        time.Duration
-	IndexerStartLedger uint32
-	CollectorAddr      string
-	LogLevel           slog.Level
+	PeriodDuration                time.Duration
+	SettlerTick                   time.Duration
+	IndexerStartLedger            uint32
+	CollectorAddr                 string
+	LogLevel                      slog.Level
+	HTTPReadHeaderTimeout         time.Duration
+	HTTPReadTimeout               time.Duration
+	HTTPWriteTimeout              time.Duration
+	HTTPIdleTimeout               time.Duration
+	IndexerMaxConsecutiveFailures uint32
 }
 
 // String renders the config for logs and error messages with the operator
@@ -99,11 +117,12 @@ func (c *Config) String() string {
 		"Config{DatabaseURL:%s StellarRPCURL:%s NetworkPassphrase:%s PriceBookID:%s "+
 			"StatementRegistryID:%s OperatorAddress:%s OperatorSecretSource:%s OperatorSecret:%s "+
 			"OperatorSecretPath:%s SafetyMarginLedgers:%d MaxExposure:%s MaxExposureAge:%s PeriodDuration:%s SettlerTick:%s "+
-			"IndexerStartLedger:%d CollectorAddr:%s LogLevel:%s}",
+			"IndexerStartLedger:%d CollectorAddr:%s LogLevel:%s HTTPReadHeaderTimeout:%s HTTPReadTimeout:%s HTTPWriteTimeout:%s HTTPIdleTimeout:%s IndexerMaxConsecutiveFailures:%d}",
 		c.DatabaseURL, c.StellarRPCURL, c.NetworkPassphrase, c.PriceBookID,
 		c.StatementRegistryID, c.OperatorAddress, c.OperatorSecretSource, c.OperatorSecret,
 		c.OperatorSecretPath, c.SafetyMarginLedgers, c.MaxExposure, c.MaxExposureAge, c.PeriodDuration, c.SettlerTick,
-		c.IndexerStartLedger, c.CollectorAddr, c.LogLevel,
+		c.IndexerStartLedger, c.CollectorAddr, c.LogLevel, c.HTTPReadHeaderTimeout, c.HTTPReadTimeout, c.HTTPWriteTimeout, c.HTTPIdleTimeout,
+		c.IndexerMaxConsecutiveFailures,
 	)
 }
 
@@ -302,6 +321,37 @@ func Load(lookup Lookup) (*Config, error) {
 		}
 	}
 
+	for _, timeout := range []struct {
+		name         string
+		value        *time.Duration
+		defaultValue time.Duration
+	}{
+		{envHTTPReadHeaderTimeout, &cfg.HTTPReadHeaderTimeout, defaultHTTPReadHeaderTimeout},
+		{envHTTPReadTimeout, &cfg.HTTPReadTimeout, defaultHTTPReadTimeout},
+		{envHTTPWriteTimeout, &cfg.HTTPWriteTimeout, defaultHTTPWriteTimeout},
+		{envHTTPIdleTimeout, &cfg.HTTPIdleTimeout, defaultHTTPIdleTimeout},
+	} {
+		value, err := optionalPositiveDuration(lookup, timeout.name, timeout.defaultValue)
+		if err != nil {
+			errs = append(errs, err)
+		} else {
+			*timeout.value = value
+		}
+	}
+
+	if raw, ok := lookup(envIndexerMaxConsecutiveFailures); !ok || raw == "" {
+		cfg.IndexerMaxConsecutiveFailures = defaultIndexerMaxConsecutiveFailures
+	} else {
+		value, err := parseUint32(envIndexerMaxConsecutiveFailures, raw)
+		if err != nil {
+			errs = append(errs, err)
+		} else if value == 0 {
+			errs = append(errs, fmt.Errorf("config: %s: must be positive", envIndexerMaxConsecutiveFailures))
+		} else {
+			cfg.IndexerMaxConsecutiveFailures = value
+		}
+	}
+
 	if len(errs) > 0 {
 		return nil, joinErrors(errs)
 	}
@@ -363,6 +413,21 @@ func parseUint32(name, raw string) (uint32, error) {
 		return 0, fmt.Errorf("config: %s: not a valid non-negative integer: %q", name, raw)
 	}
 	return uint32(v), nil
+}
+
+func optionalPositiveDuration(lookup Lookup, name string, fallback time.Duration) (time.Duration, error) {
+	raw, ok := lookup(name)
+	if !ok || raw == "" {
+		return fallback, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s: %w", name, err)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("config: %s: must be positive, got %s", name, value)
+	}
+	return value, nil
 }
 
 func parseLogLevel(raw string) (slog.Level, error) {
