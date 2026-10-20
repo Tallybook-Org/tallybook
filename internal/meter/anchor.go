@@ -324,6 +324,27 @@ func (a *Anchorer) markPeriodAnchored(ctx context.Context, periodID int64, seq u
 	return nil
 }
 
+// BilledAmount returns the total amount billed for a period — the sum of
+// its requests' charged amounts — which is exactly the figure
+// AnchorPeriod submits as amount_billed.
+//
+// A caller that has to supply amount_settled alongside it needs to know
+// what the billed amount is: statement_registry rejects a statement
+// whose settled amount exceeds its billed amount, and "everything
+// billed has been collected" is only a statement about an amount the
+// caller knows.
+func (a *Anchorer) BilledAmount(ctx context.Context, periodID int64) (*big.Int, error) {
+	period, err := a.fetchPeriod(ctx, periodID)
+	if err != nil {
+		return nil, err
+	}
+	usg, err := a.computeUsage(ctx, period, periodID)
+	if err != nil {
+		return nil, err
+	}
+	return usg.amountBilled, nil
+}
+
 // AnchorResult is what AnchorPeriod and ReconcileAnchoring produce for a
 // period that ends up anchored (by this call or a prior one).
 type AnchorResult struct {

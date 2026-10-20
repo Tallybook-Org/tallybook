@@ -202,6 +202,80 @@ func TestLoad_SettlerAndIndexerInvalidValues(t *testing.T) {
 	}
 }
 
+// TestLoad_CollectorTicks covers the collector's two background ticks:
+// unset means the documented default, set means the operator's value, and
+// a malformed one fails startup rather than quietly running at some other
+// cadence.
+func TestLoad_CollectorTicks(t *testing.T) {
+	env := validEnv()
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+	if cfg.CollectorPeriodTick != DefaultCollectorPeriodTick {
+		t.Errorf("CollectorPeriodTick = %s, want default %s", cfg.CollectorPeriodTick, DefaultCollectorPeriodTick)
+	}
+	if cfg.CollectorAnchorTick != DefaultCollectorAnchorTick {
+		t.Errorf("CollectorAnchorTick = %s, want default %s", cfg.CollectorAnchorTick, DefaultCollectorAnchorTick)
+	}
+
+	env[envCollectorPeriodTick] = "30s"
+	env[envCollectorAnchorTick] = "2m"
+	cfg, err = Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+	if cfg.CollectorPeriodTick != 30*time.Second {
+		t.Errorf("CollectorPeriodTick = %s, want 30s", cfg.CollectorPeriodTick)
+	}
+	if cfg.CollectorAnchorTick != 2*time.Minute {
+		t.Errorf("CollectorAnchorTick = %s, want 2m", cfg.CollectorAnchorTick)
+	}
+
+	for _, tt := range []struct{ key, value string }{
+		{envCollectorPeriodTick, "0s"},
+		{envCollectorAnchorTick, "-1m"},
+		{envCollectorAnchorTick, "soon"},
+	} {
+		bad := validEnv()
+		bad[tt.key] = tt.value
+		if _, err := Load(lookupFrom(bad)); err == nil {
+			t.Errorf("Load accepted %s=%q", tt.key, tt.value)
+		}
+	}
+}
+
+// TestLoad_AnchorToken covers the one configuration value that is
+// legitimately optional and empty: without it the collector meters and
+// closes periods but never anchors the ones whose token it cannot
+// derive, and a malformed one is rejected rather than used.
+func TestLoad_AnchorToken(t *testing.T) {
+	env := validEnv()
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+	if cfg.AnchorToken != "" {
+		t.Errorf("AnchorToken = %q, want empty when unset", cfg.AnchorToken)
+	}
+
+	env[envAnchorToken] = "C" + strings.Repeat("B", 55)
+	cfg, err = Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+	if cfg.AnchorToken != env[envAnchorToken] {
+		t.Errorf("AnchorToken = %q, want %q", cfg.AnchorToken, env[envAnchorToken])
+	}
+
+	for _, bad := range []string{"not-a-strkey", "G" + strings.Repeat("A", 55), "C" + strings.Repeat("A", 10)} {
+		env[envAnchorToken] = bad
+		if _, err := Load(lookupFrom(env)); err == nil {
+			t.Errorf("Load accepted %s=%q", envAnchorToken, bad)
+		}
+	}
+}
+
 // fileSourceEnv returns a valid environment configured for
 // TB_OPERATOR_SECRET_SOURCE=file, with TB_OPERATOR_SECRET removed and
 // TB_OPERATOR_SECRET_PATH pointing at path.
@@ -648,10 +722,18 @@ func ExampleConfig_String() {
 		SettlerMetricsAddr: ":9101",
 		IndexerAddr:        ":9102",
 		IndexerTick:        5 * time.Second,
+		// The anchor token is the one field that is legitimately empty in
+		// a default deployment: without it the collector meters and closes
+		// periods but does not anchor the ones whose token it cannot
+		// derive.
+		AnchorToken: "",
+		// The collector's two background ticks, at their defaults.
+		CollectorPeriodTick: time.Minute,
+		CollectorAnchorTick: 5 * time.Minute,
 	}
 	fmt.Println(cfg.String())
 	// Output:
-	// Config{DatabaseURL:postgres://tallybook:tallybook@localhost:5432/tallybook StellarRPCURL:https://soroban-testnet.stellar.org NetworkPassphrase:Test SDF Network ; September 2015 PriceBookID:CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA StatementRegistryID:CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA OperatorAddress:GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX OperatorSecretSource:env OperatorSecret:[REDACTED] OperatorSecretPath:[REDACTED] SafetyMarginLedgers:1440 MaxExposure:10000000 MaxExposureAge:24h0m0s PeriodDuration:720h0m0s SettlerTick:30s IndexerStartLedger:4590000 CollectorAddr::8080 LogLevel:INFO HTTPReadHeaderTimeout:5s HTTPReadTimeout:2m0s HTTPWriteTimeout:5m0s HTTPIdleTimeout:2m0s IndexerMaxConsecutiveFailures:3 SettlerMetricsAddr::9101 IndexerAddr::9102 IndexerTick:5s}
+	// Config{DatabaseURL:postgres://tallybook:tallybook@localhost:5432/tallybook StellarRPCURL:https://soroban-testnet.stellar.org NetworkPassphrase:Test SDF Network ; September 2015 PriceBookID:CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA StatementRegistryID:CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA OperatorAddress:GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX OperatorSecretSource:env OperatorSecret:[REDACTED] OperatorSecretPath:[REDACTED] SafetyMarginLedgers:1440 MaxExposure:10000000 MaxExposureAge:24h0m0s PeriodDuration:720h0m0s SettlerTick:30s IndexerStartLedger:4590000 CollectorAddr::8080 LogLevel:INFO HTTPReadHeaderTimeout:5s HTTPReadTimeout:2m0s HTTPWriteTimeout:5m0s HTTPIdleTimeout:2m0s IndexerMaxConsecutiveFailures:3 SettlerMetricsAddr::9101 IndexerAddr::9102 IndexerTick:5s AnchorToken: CollectorPeriodTick:1m0s CollectorAnchorTick:5m0s}
 }
 
 func ExampleLoadEnv() {
