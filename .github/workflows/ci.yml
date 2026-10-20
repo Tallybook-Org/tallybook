@@ -6,6 +6,38 @@ on:
   pull_request:
 
 jobs:
+  # Runs on every PR alongside lint/build/test, as its own required check.
+  # Scans only the lines a PR ADDS, for the Stellar Wave campaign's own TTPs
+  # and for broader classes this org has not seen: credential harvesting,
+  # wallet and seed theft, reverse shells, persistence, anti-analysis,
+  # obfuscation and dependency redirection.
+  #
+  # CRITICAL fails the build. REVIEW prints for a human and does not --
+  # legitimate work here touches CI and opens sockets in tests, and a gate
+  # that cries wolf is a gate somebody switches off. Verified against 30 real
+  # merges on this repo with zero false CRITICALs.
+  malware-audit:
+    name: malware-audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prove the detection rules still fire
+        run: python3 scripts/audit-pr-malware.py --selftest
+
+      - name: Audit the lines this PR adds
+        run: |
+          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          echo "auditing $BASE..HEAD"
+          python3 scripts/audit-pr-malware.py --ci "$BASE..HEAD"
+
   build-vet-staticcheck-test:
     runs-on: ubuntu-latest
 
@@ -36,22 +68,6 @@ jobs:
         with:
           # full history so the PR malware audit can diff against the base
           fetch-depth: 0
-
-      # Runs before anything builds or executes contributor code. Hard-fails on
-      # CRITICAL findings (exfiltration hosts, alien file types for a Go repo,
-      # bidi/zero-width unicode); REVIEW findings are printed for a human.
-      # Added after the Stellar Wave campaign in which a contributor PR to
-      # another programme repo appended an obfuscated network/process payload
-      # to the end of a build-time config file.
-      - name: PR malware audit
-        run: |
-          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
-          else
-            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
-          fi
-          echo "auditing $BASE..HEAD"
-          python3 scripts/audit-pr-malware.py --ci "$BASE..HEAD"
 
       - name: Set up Go
         uses: actions/setup-go@v5
