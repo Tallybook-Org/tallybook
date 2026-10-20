@@ -180,6 +180,16 @@ func (d *Driver) AnchorDue(ctx context.Context) (int, error) {
 
 		settled, err := d.settledAmountFor(ctx, candidate)
 		if err != nil {
+			if errors.Is(err, meter.ErrPeriodEmpty) {
+				// A period with no requests has nothing to anchor — the
+				// chain rejects an empty statement too. It happens when a
+				// request opened its period and then failed to be
+				// recorded. Nothing to do about it, and not worth an
+				// error every pass.
+				slog.InfoContext(ctx, "anchor: period has no requests to anchor, skipping",
+					"period_id", candidate.PeriodID)
+				continue
+			}
 			slog.ErrorContext(ctx, "anchor: resolve settled amount, skipping this period this pass",
 				"period_id", candidate.PeriodID, "protocol", candidate.Protocol, "error", err)
 			continue

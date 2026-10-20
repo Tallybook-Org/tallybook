@@ -498,6 +498,40 @@ func TestNewDriver_RejectsMissingDependencies(t *testing.T) {
 	}
 }
 
+// TestDriver_AnchorDue_SkipsAPeriodWithNoRequests covers the period
+// that opened but never received a request: there is nothing to anchor,
+// and the chain would reject an empty statement anyway.
+func TestDriver_AnchorDue_SkipsAPeriodWithNoRequests(t *testing.T) {
+	pool := testPool(t)
+	periodID := insertClosedPeriod(t, pool, "x402", "", 1, 1000, 1999)
+
+	submitter := &fakeSubmitter{seq: 1, hash: "x"}
+	driver, err := NewDriver(Config{
+		Anchorer: meter.NewAnchorer(pool),
+		Registry: submitter,
+		Signer:   testSigner(t),
+		Token:    testToken,
+		Pool:     pool,
+	})
+	if err != nil {
+		t.Fatalf("NewDriver returned unexpected error: %v", err)
+	}
+
+	anchored, err := driver.AnchorDue(context.Background())
+	if err != nil {
+		t.Fatalf("AnchorDue returned unexpected error: %v", err)
+	}
+	if anchored != 0 {
+		t.Errorf("anchored %d periods, want 0", anchored)
+	}
+	if len(submitter.calls) != 0 {
+		t.Errorf("submitted %d anchors, want 0", len(submitter.calls))
+	}
+	if got := periodStatus(t, pool, periodID); got != "closed" {
+		t.Errorf("period status = %q, want closed", got)
+	}
+}
+
 // TestDriver_AnchorDue_OneFailureDoesNotStopTheRest covers the batch
 // posture: one period's failure is logged and the rest of the batch
 // still goes through.

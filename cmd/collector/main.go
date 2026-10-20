@@ -54,6 +54,12 @@ func main() {
 	}
 }
 
+// catalogWarmupTimeout bounds the collector's startup warm-up of the
+// operator's price catalog. The warm-up is an optimization — the
+// background refresher keeps trying either way — so it must not hold the
+// collector's startup for longer than this.
+const catalogWarmupTimeout = 10 * time.Second
+
 // run does the actual work, taking ctx rather than constructing its own
 // signal-derived one internally — main's job is exactly that construction;
 // run's is everything else, which keeps run callable from a test with a
@@ -166,11 +172,16 @@ func run(ctx context.Context) error {
 
 	// Warm the catalog before serving: the first request would otherwise
 	// be the one that waits for the chain, and the collector's readiness
-	// would depend on the price book being readable at that moment.
-	if _, err := catalogs.Refresh(ctx, cfg.OperatorAddress); err != nil {
+	// would depend on the price book being readable at that moment. The
+	// warm-up gets its own short deadline — it is an optimization, not a
+	// precondition, and a price book that cannot be read yet must not
+	// hold the collector's startup hostage.
+	warmupCtx, cancelWarmup := context.WithTimeout(ctx, catalogWarmupTimeout)
+	if _, err := catalogs.Refresh(warmupCtx, cfg.OperatorAddress); err != nil {
 		slog.Warn("collector: could not read the operator's price book yet; the collector will keep trying",
 			"operator", cfg.OperatorAddress, "error", err)
 	}
+	cancelWarmup()
 
 	var wg sync.WaitGroup
 	wg.Add(3)

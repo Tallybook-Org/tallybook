@@ -76,6 +76,13 @@ var (
 // nothing; the lag that matters is bounded by this.
 const DefaultTTL = 30 * time.Second
 
+// backgroundRefreshTimeout bounds one background refresh. It is
+// deliberately independent of the TTL: a refresh that re-reads a long
+// version history, or one that fetches a schedule document from a slow
+// origin, must not be cut short by the freshness window that decided to
+// start it.
+const backgroundRefreshTimeout = 2 * time.Minute
+
 // VersionReader is the read side of the price_book contract this package
 // needs. *stellar.PriceBook satisfies it.
 type VersionReader interface {
@@ -275,7 +282,7 @@ func (s *Source) refreshInBackground(ctx context.Context, operator string, entry
 	if !entry.refreshing.CompareAndSwap(false, true) {
 		return
 	}
-	refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.ttl)
+	refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backgroundRefreshTimeout)
 	go func() {
 		defer cancel()
 		defer entry.refreshing.Store(false)
@@ -332,7 +339,15 @@ func (s *Source) refresh(ctx context.Context, operator string, entry *operatorEn
 		// Nothing new was published. The cached catalog is still the
 		// right one; only its freshness changes.
 		entry.fetchedAt.Store(s.now().UnixNano())
-		return entry.catalog.Load(), nil
+		cached := entry.catalog.Load()
+		if cached == nil {
+			// Unreachable: a cached latest version implies a cached
+			// catalog, the two are stored together. Guarded anyway,
+			// because a nil catalog handed back with a nil error would
+			// be dereferenced by the caller.
+			return nil, fmt.Errorf("pricebook: %s: no catalog for the versions already fetched", operator)
+		}
+		return cached, nil
 	}
 
 	catalog, err := meter.NewCatalog(versions...)
