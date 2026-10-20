@@ -54,10 +54,11 @@ func main() {
 	}
 }
 
-// catalogWarmupTimeout bounds the collector's startup warm-up of the
-// operator's price catalog. The warm-up is an optimization — the
-// background refresher keeps trying either way — so it must not hold the
-// collector's startup for longer than this.
+// catalogWarmupTimeout bounds the collector's warm-up of the operator's
+// price catalog. The warm-up is an optimization — the background
+// refresher keeps trying either way, and a request that arrives before
+// it lands waits for the catalog itself — so it must not hold anything
+// up for longer than this.
 const catalogWarmupTimeout = 10 * time.Second
 
 // run does the actual work, taking ctx rather than constructing its own
@@ -170,23 +171,23 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("construct HTTP server: %w", err)
 	}
 
-	// Warm the catalog before serving: the first request would otherwise
-	// be the one that waits for the chain, and the collector's readiness
-	// would depend on the price book being readable at that moment. The
-	// warm-up gets its own short deadline — it is an optimization, not a
-	// precondition, and a price book that cannot be read yet must not
-	// hold the collector's startup hostage.
-	warmupCtx, cancelWarmup := context.WithTimeout(ctx, catalogWarmupTimeout)
-	if _, err := catalogs.Refresh(warmupCtx, cfg.OperatorAddress); err != nil {
-		slog.Warn("collector: could not read the operator's price book yet; the collector will keep trying",
-			"operator", cfg.OperatorAddress, "error", err)
-	}
-	cancelWarmup()
+	// Warm the catalog in the background, alongside the server: the first
+	// request would otherwise be the one that waits for the chain, and
+	// the collector's readiness would depend on the price book being
+	// readable at that moment. The warm-up gets its own short deadline —
+	// it is an optimization, not a precondition, and a price book that
+	// cannot be read yet must not hold the collector's startup hostage.
 
 	var wg sync.WaitGroup
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
+		warmupCtx, cancelWarmup := context.WithTimeout(ctx, catalogWarmupTimeout)
+		if _, err := catalogs.Refresh(warmupCtx, cfg.OperatorAddress); err != nil {
+			slog.Warn("collector: could not read the operator's price book yet; the collector will keep trying",
+				"operator", cfg.OperatorAddress, "error", err)
+		}
+		cancelWarmup()
 		slog.Info("collector: price book refresh loop starting", "interval", catalogs.TTL())
 		catalogs.Run(ctx)
 		slog.Info("collector: price book refresh loop stopped")

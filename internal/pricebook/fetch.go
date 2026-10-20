@@ -37,13 +37,17 @@ func NewHTTPFetcher(client *http.Client) *HTTPFetcher {
 }
 
 // Fetch retrieves the document at uri.
+//
+// The errors it returns name the failure, not the URI: the caller knows
+// which version it asked for and says so itself, and repeating the URI
+// in both places only makes the message harder to read.
 func (f *HTTPFetcher) Fetch(ctx context.Context, uri string) ([]byte, error) {
 	parsed, err := url.Parse(uri)
 	if err != nil {
-		return nil, fmt.Errorf("pricebook: parse schedule URI %q: %w", uri, err)
+		return nil, fmt.Errorf("pricebook: parse schedule URI: %w", err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return nil, fmt.Errorf("pricebook: schedule URI %q: %w: scheme is %q", uri, ErrUnsupportedScheme, parsed.Scheme)
+		return nil, fmt.Errorf("pricebook: %w: scheme is %q", ErrUnsupportedScheme, parsed.Scheme)
 	}
 
 	client := f.Client
@@ -57,24 +61,24 @@ func (f *HTTPFetcher) Fetch(ctx context.Context, uri string) ([]byte, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, uri, nil)
 	if err != nil {
-		return nil, fmt.Errorf("pricebook: build request for %q: %w", uri, err)
+		return nil, fmt.Errorf("pricebook: build request: %w", err)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("pricebook: fetch schedule from %q: %w", uri, err)
+		return nil, fmt.Errorf("pricebook: fetch schedule: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("pricebook: fetch schedule from %q: unexpected status %s", uri, resp.Status)
+		return nil, fmt.Errorf("pricebook: fetch schedule: unexpected status %s", resp.Status)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 	if err != nil {
-		return nil, fmt.Errorf("pricebook: read schedule from %q: %w", uri, err)
+		return nil, fmt.Errorf("pricebook: read schedule: %w", err)
 	}
 	if int64(len(body)) > maxBytes {
-		return nil, fmt.Errorf("pricebook: schedule at %q is larger than the %d byte limit", uri, maxBytes)
+		return nil, fmt.Errorf("pricebook: schedule is larger than the %d byte limit", maxBytes)
 	}
 	return body, nil
 }
