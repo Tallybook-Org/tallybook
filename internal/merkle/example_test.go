@@ -17,6 +17,34 @@ func exampleFill32(b byte) [32]byte {
 	return out
 }
 
+// ExampleBuildTree shows how BuildTree constructs a sorted-pair Merkle tree
+// over concrete 32-byte leaf hashes, producing a root hash and per-leaf proofs
+// that match the statement_registry contract's fold algorithm.
+func ExampleBuildTree() {
+	// Construct concrete literal leaf inputs.
+	leaves := [][32]byte{
+		exampleFill32(0x11),
+		exampleFill32(0x22),
+		exampleFill32(0x33),
+	}
+
+	tree, err := BuildTree(leaves)
+	if err != nil {
+		log.Fatalf("BuildTree: %v", err)
+	}
+
+	fmt.Printf("Root: %x\n", tree.Root)
+	fmt.Printf("Proof count: %d\n", len(tree.Proofs))
+	fmt.Printf("First leaf proof length: %d\n", len(tree.Proofs[0]))
+	fmt.Println("First leaf verifies against root:", VerifyProof(tree.Root, leaves[0], tree.Proofs[0]))
+
+	// Output:
+	// Root: 277b6f43115f5bfd44a875c69575ec332ca5cae7eb76566270a122038611e48f
+	// Proof count: 3
+	// First leaf proof length: 2
+	// First leaf verifies against root: true
+}
+
 // ExampleProof shows how a caller obtains and uses a Proof.
 //
 // The type's doc comment turns on one design decision: a Proof is an

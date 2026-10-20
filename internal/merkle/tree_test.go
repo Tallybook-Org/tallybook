@@ -154,6 +154,24 @@ func TestVerifyProof_AllowsEqualSibling(t *testing.T) {
 	}
 }
 
+// ExampleVerifyProof demonstrates how VerifyProof validates a leaf and its
+// proof against a known Merkle root.
+func ExampleVerifyProof() {
+	leaf := [32]byte{0x01}
+	sibling := [32]byte{0x02}
+	root := sortedPairHash(leaf, sibling)
+
+	valid := VerifyProof(root, leaf, Proof{sibling})
+	invalid := VerifyProof(root, leaf, Proof{leaf})
+
+	fmt.Println(valid)
+	fmt.Println(invalid)
+
+	// Output:
+	// true
+	// false
+}
+
 func FuzzBuildTreeProofAgreement(f *testing.F) {
 	f.Add([]byte{0, 0, 0})   // one leaf
 	f.Add([]byte{6, 0, 0})   // seven leaves, unbalanced at multiple levels
@@ -225,6 +243,18 @@ func TestBuildTree_SingleLeafHasEmptyProofAndRootEqualsLeaf(t *testing.T) {
 // TestBuildTree_OddCountsAtEveryDepth exercises the odd-leaf-promotion
 // path at several tree depths (3, 5, 9, 13 leaves), not just the fixture's
 // seven-leaf case, and checks every proof folds back to the root.
+func ExampleFold() {
+	leaf := [32]byte{1, 2, 3, 4}
+	proof := Proof{
+		[32]byte{5, 6, 7, 8},
+		[32]byte{9, 10, 11, 12},
+	}
+	root := Fold(leaf, proof)
+	fmt.Printf("%x\n", root)
+	// Output:
+	// 55c67a99fbb692b189589b60eefdfa2de4059653220cfe35a4f54b8e27abdf4d
+}
+
 func TestBuildTree_OddCountsAtEveryDepth(t *testing.T) {
 	for _, n := range []int{2, 3, 5, 6, 9, 13} {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
