@@ -150,6 +150,9 @@ naming it.
 | `TB_INDEXER_START_LEDGER` | `4590000` | Where ingestion begins |
 | `TB_INDEXER_MAX_CONSECUTIVE_FAILURES` | `3` | Consecutive failed polls before indexer readiness fails |
 | `TB_COLLECTOR_ADDR` | `:8080` | Collector listen address |
+| `TB_SETTLER_METRICS_ADDR` | `:9101` | Optional. Settler listen address for `/metrics`, `/healthz`, `/readyz` |
+| `TB_INDEXER_ADDR` | `:9102` | Optional. Indexer listen address for `/metrics`, `/healthz`, `/readyz` |
+| `TB_INDEXER_TICK` | `5s` | Optional. How often the indexer polls the chain for new events |
 | `TB_LOG_LEVEL` | `info` | |
 | `TB_HTTP_READ_HEADER_TIMEOUT` | `5s` | Maximum time to read request headers; protects against slow-header clients |
 | `TB_HTTP_READ_TIMEOUT` | `2m` | Maximum time to read a complete request |

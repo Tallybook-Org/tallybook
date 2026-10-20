@@ -123,6 +123,85 @@ func TestLoad_SafetyMarginDefaultsWhenUnset(t *testing.T) {
 	}
 }
 
+// TestLoad_SettlerAndIndexerDefaultsWhenUnset covers the three variables
+// that were fixed inside the binaries before they were configurable:
+// leaving them unset must reproduce exactly what those binaries did, so
+// an existing deployment that sets nothing keeps behaving the same.
+func TestLoad_SettlerAndIndexerDefaultsWhenUnset(t *testing.T) {
+	env := validEnv()
+	delete(env, envSettlerMetricsAddr)
+	delete(env, envIndexerAddr)
+	delete(env, envIndexerTick)
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+	if cfg.SettlerMetricsAddr != DefaultSettlerMetricsAddr {
+		t.Errorf("SettlerMetricsAddr = %q, want default %q", cfg.SettlerMetricsAddr, DefaultSettlerMetricsAddr)
+	}
+	if cfg.IndexerAddr != DefaultIndexerAddr {
+		t.Errorf("IndexerAddr = %q, want default %q", cfg.IndexerAddr, DefaultIndexerAddr)
+	}
+	if cfg.IndexerTick != DefaultIndexerTick {
+		t.Errorf("IndexerTick = %s, want default %s", cfg.IndexerTick, DefaultIndexerTick)
+	}
+}
+
+// TestLoad_SettlerAndIndexerOverrides covers the same three variables
+// when they are set: the point of making them configurable is that an
+// operator can move a service off its default port or retune a poll
+// cadence without a rebuild.
+func TestLoad_SettlerAndIndexerOverrides(t *testing.T) {
+	env := validEnv()
+	env[envSettlerMetricsAddr] = "127.0.0.1:19101"
+	env[envIndexerAddr] = "127.0.0.1:19102"
+	env[envIndexerTick] = "45s"
+	cfg, err := Load(lookupFrom(env))
+	if err != nil {
+		t.Fatalf("Load returned unexpected error: %v", err)
+	}
+	if cfg.SettlerMetricsAddr != "127.0.0.1:19101" {
+		t.Errorf("SettlerMetricsAddr = %q, want 127.0.0.1:19101", cfg.SettlerMetricsAddr)
+	}
+	if cfg.IndexerAddr != "127.0.0.1:19102" {
+		t.Errorf("IndexerAddr = %q, want 127.0.0.1:19102", cfg.IndexerAddr)
+	}
+	if cfg.IndexerTick != 45*time.Second {
+		t.Errorf("IndexerTick = %s, want 45s", cfg.IndexerTick)
+	}
+}
+
+// TestLoad_SettlerAndIndexerInvalidValues checks that a malformed value
+// fails startup instead of quietly falling back to the default: a typo in
+// a listen address must not move a service onto a port the operator did
+// not ask for, and a non-positive poll interval is never what was meant.
+func TestLoad_SettlerAndIndexerInvalidValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		key   string
+		value string
+	}{
+		{"malformed settler metrics address", envSettlerMetricsAddr, "9101"},
+		{"malformed indexer address", envIndexerAddr, "not-a-host-port"},
+		{"malformed indexer tick", envIndexerTick, "5 seconds"},
+		{"zero indexer tick", envIndexerTick, "0s"},
+		{"negative indexer tick", envIndexerTick, "-1s"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv()
+			env[tt.key] = tt.value
+			_, err := Load(lookupFrom(env))
+			if err == nil {
+				t.Errorf("Load accepted %s=%q", tt.key, tt.value)
+			}
+			if !strings.Contains(err.Error(), tt.key) {
+				t.Errorf("error %q does not name %s", err, tt.key)
+			}
+		})
+	}
+}
+
 // fileSourceEnv returns a valid environment configured for
 // TB_OPERATOR_SECRET_SOURCE=file, with TB_OPERATOR_SECRET removed and
 // TB_OPERATOR_SECRET_PATH pointing at path.
@@ -564,10 +643,15 @@ func ExampleConfig_String() {
 		HTTPWriteTimeout:              5 * time.Minute,
 		HTTPIdleTimeout:               2 * time.Minute,
 		IndexerMaxConsecutiveFailures: 3,
+		// Likewise for the settler's metrics address, the indexer's health
+		// address, and the indexer's poll interval.
+		SettlerMetricsAddr: ":9101",
+		IndexerAddr:        ":9102",
+		IndexerTick:        5 * time.Second,
 	}
 	fmt.Println(cfg.String())
 	// Output:
-	// Config{DatabaseURL:postgres://tallybook:tallybook@localhost:5432/tallybook StellarRPCURL:https://soroban-testnet.stellar.org NetworkPassphrase:Test SDF Network ; September 2015 PriceBookID:CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA StatementRegistryID:CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA OperatorAddress:GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX OperatorSecretSource:env OperatorSecret:[REDACTED] OperatorSecretPath:[REDACTED] SafetyMarginLedgers:1440 MaxExposure:10000000 MaxExposureAge:24h0m0s PeriodDuration:720h0m0s SettlerTick:30s IndexerStartLedger:4590000 CollectorAddr::8080 LogLevel:INFO HTTPReadHeaderTimeout:5s HTTPReadTimeout:2m0s HTTPWriteTimeout:5m0s HTTPIdleTimeout:2m0s IndexerMaxConsecutiveFailures:3}
+	// Config{DatabaseURL:postgres://tallybook:tallybook@localhost:5432/tallybook StellarRPCURL:https://soroban-testnet.stellar.org NetworkPassphrase:Test SDF Network ; September 2015 PriceBookID:CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA StatementRegistryID:CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA OperatorAddress:GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX OperatorSecretSource:env OperatorSecret:[REDACTED] OperatorSecretPath:[REDACTED] SafetyMarginLedgers:1440 MaxExposure:10000000 MaxExposureAge:24h0m0s PeriodDuration:720h0m0s SettlerTick:30s IndexerStartLedger:4590000 CollectorAddr::8080 LogLevel:INFO HTTPReadHeaderTimeout:5s HTTPReadTimeout:2m0s HTTPWriteTimeout:5m0s HTTPIdleTimeout:2m0s IndexerMaxConsecutiveFailures:3 SettlerMetricsAddr::9101 IndexerAddr::9102 IndexerTick:5s}
 }
 
 func ExampleLoadEnv() {

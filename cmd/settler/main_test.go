@@ -36,6 +36,7 @@ func setSmokeTestEnv(t *testing.T) {
 		"TB_SETTLER_TICK":          "30s",
 		"TB_INDEXER_START_LEDGER":  "4590000",
 		"TB_COLLECTOR_ADDR":        ":8080",
+		"TB_SETTLER_METRICS_ADDR":  metricsAddrDefault,
 		"TB_LOG_LEVEL":             "info",
 	}
 	for k, v := range env {
@@ -70,7 +71,7 @@ func TestRun_StartsAndStaysUpUntilCancelled(t *testing.T) {
 	var lastErr error
 	up := false
 	for i := 0; i < 50; i++ {
-		resp, err := http.Get("http://localhost" + metricsAddr + "/healthz")
+		resp, err := http.Get("http://localhost" + metricsAddrDefault + "/healthz")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

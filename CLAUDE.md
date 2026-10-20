@@ -418,6 +418,9 @@ naming the missing variable — never start with a zero value.
 | `TB_SETTLER_TICK` | `30s` | Poll interval |
 | `TB_INDEXER_START_LEDGER` | `4590000` | Where ingestion begins |
 | `TB_COLLECTOR_ADDR` | `:8080` | Listen address |
+| `TB_SETTLER_METRICS_ADDR` | `:9101` | Optional. Settler listen address for `/metrics`, `/healthz`, `/readyz` |
+| `TB_INDEXER_ADDR` | `:9102` | Optional. Indexer listen address for `/metrics`, `/healthz`, `/readyz` |
+| `TB_INDEXER_TICK` | `5s` | Optional. How often the indexer polls the chain for new events |
 | `TB_LOG_LEVEL` | `info` | |
 
 Secrets never appear in logs, error messages, metrics labels, or commits. Add a test that

@@ -30,16 +30,13 @@ import (
 	"github.com/Tallybook-Org/tallybook/internal/store"
 )
 
-// healthAddr is where the indexer serves /healthz and /readyz. §7 has no
-// env var for it — TB_COLLECTOR_ADDR belongs to a different binary — so
-// this is a fixed default rather than newly-invented required
-// configuration, the same call cmd/settler makes for its own :9101.
-const healthAddr = ":9102"
-
-// tickInterval is how often Ingestor.Run polls getEvents. §7 has no
-// env var for this either; a fixed, reasonable default rather than
-// inventing required configuration for it.
-const tickInterval = 5 * time.Second
+// healthAddrDefault is the address the indexer falls back to when
+// TB_INDEXER_ADDR is unset. §7 named no env var for it — TB_COLLECTOR_ADDR
+// belongs to a different binary — so this binary shipped with a fixed
+// value, which the variable now makes adjustable without changing what
+// an existing deployment does. The poll interval it shipped with is
+// config.DefaultIndexerTick, adjustable through TB_INDEXER_TICK.
+const healthAddrDefault = config.DefaultIndexerAddr
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -109,7 +106,7 @@ func run(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	srv, err := httpserver.New(healthAddr, mux, httpserver.Timeouts{
+	srv, err := httpserver.New(cfg.IndexerAddr, mux, httpserver.Timeouts{
 		ReadHeader: cfg.HTTPReadHeaderTimeout,
 		Read:       cfg.HTTPReadTimeout,
 		Write:      cfg.HTTPWriteTimeout,
@@ -123,14 +120,14 @@ func run(ctx context.Context) error {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		slog.Info("indexer: ingestion loop starting", "tick", tickInterval)
-		ix.Run(ctx, tickInterval)
+		slog.Info("indexer: ingestion loop starting", "tick", cfg.IndexerTick)
+		ix.Run(ctx, cfg.IndexerTick)
 		slog.Info("indexer: ingestion loop stopped")
 	}()
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("indexer: health server listening", "addr", healthAddr)
+		slog.Info("indexer: health server listening", "addr", cfg.IndexerAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("http server: %w", err)
 		}
