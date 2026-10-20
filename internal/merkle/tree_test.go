@@ -154,6 +154,24 @@ func TestVerifyProof_AllowsEqualSibling(t *testing.T) {
 	}
 }
 
+// ExampleVerifyProof demonstrates how VerifyProof validates a leaf and its
+// proof against a known Merkle root.
+func ExampleVerifyProof() {
+	leaf := [32]byte{0x01}
+	sibling := [32]byte{0x02}
+	root := sortedPairHash(leaf, sibling)
+
+	valid := VerifyProof(root, leaf, Proof{sibling})
+	invalid := VerifyProof(root, leaf, Proof{leaf})
+
+	fmt.Println(valid)
+	fmt.Println(invalid)
+
+	// Output:
+	// true
+	// false
+}
+
 func FuzzBuildTreeProofAgreement(f *testing.F) {
 	f.Add([]byte{0, 0, 0})   // one leaf
 	f.Add([]byte{6, 0, 0})   // seven leaves, unbalanced at multiple levels

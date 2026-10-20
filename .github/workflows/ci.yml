@@ -33,6 +33,25 @@ jobs:
     steps:
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          # full history so the PR malware audit can diff against the base
+          fetch-depth: 0
+
+      # Runs before anything builds or executes contributor code. Hard-fails on
+      # CRITICAL findings (exfiltration hosts, alien file types for a Go repo,
+      # bidi/zero-width unicode); REVIEW findings are printed for a human.
+      # Added after the Stellar Wave campaign in which a contributor PR to
+      # another programme repo appended an obfuscated network/process payload
+      # to the end of a build-time config file.
+      - name: PR malware audit
+        run: |
+          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)"
+          fi
+          echo "auditing $BASE..HEAD"
+          python3 scripts/audit-pr-malware.py --ci "$BASE..HEAD"
 
       - name: Set up Go
         uses: actions/setup-go@v5

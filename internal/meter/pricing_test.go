@@ -324,6 +324,37 @@ func TestCatalog_VersionAt_JustBeforeEarliestVersionErrors(t *testing.T) {
 	}
 }
 
+// ExamplePricer_Price shows how a Pricer computes the charged amount for
+// a request against a catalog. It resolves the observation ledger to the
+// price schedule version that was effective at that time, looks up the
+// endpoint's unit price, and multiplies it by the request unit count.
+func ExamplePricer_Price() {
+	schedule, err := ParseSchedule([]byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"150"}]}`))
+	if err != nil {
+		panic(err)
+	}
+
+	catalog, err := NewCatalog(CatalogVersion{Version: 1, EffectiveLedger: 1000, Schedule: schedule})
+	if err != nil {
+		panic(err)
+	}
+
+	pricer := NewPricer(catalog)
+
+	// Price 4 units of GET /v1/items observed at ledger 1200 under version 1.
+	priced, err := pricer.Price(1200, "GET", "/v1/items", 4)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Println("charged amount:", priced.ChargedAmount)
+	fmt.Println("price version:", priced.PriceVersion)
+
+	// Output:
+	// charged amount: 600
+	// price version: 1
+}
+
 func TestCatalog_VersionAt_SingleVersionAtItsOwnEffectiveLedger(t *testing.T) {
 	sched := mustSchedule(t, `{"rules":[{"method":"GET","path_template":"/v1/x","unit_price":"1"}]}`)
 	catalog, err := NewCatalog(CatalogVersion{Version: 1, EffectiveLedger: 500, Schedule: sched})

@@ -16,6 +16,205 @@ import (
 	"github.com/Tallybook-Org/tallybook/internal/stellar"
 )
 
+// ExampleNewAnchorer shows both halves of NewAnchorer's contract.
+// NewAnchorer itself never fails — it has no error return and stores pool
+// verbatim (see its doc comment) — so the rejection half only exists at the
+// first call that reads through the pool. A cancelled context is refused by
+// the pool's own acquire step before any connection is opened, keeping this
+// example runnable with or without Postgres; the returned error wraps
+// context.Canceled, identified with errors.Is rather than by comparing its
+// message.
+func ExampleNewAnchorer() {
+	// pgxpool.New opens no connection itself — connections are created
+	// lazily on first use — so no database needs to be reachable here.
+	pool, err := pgxpool.New(context.Background(), "postgres://tallybook:tallybook@localhost:5433/tallybook?sslmode=disable")
+	if err != nil {
+		panic(err)
+	}
+	defer pool.Close()
+
+	// Accepted input: a pool to anchor closed periods through.
+	a := NewAnchorer(pool)
+	fmt.Println("accepted:", a != nil)
+
+	// Rejected input: a context that is already cancelled. AnchorPeriod's
+	// first action is to fetch the period through pool, which refuses the
+	// cancelled context before ever connecting; the nil signer and registry
+	// are never reached.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = a.AnchorPeriod(ctx, 1, nil, nil, "", big.NewInt(0))
+	fmt.Println("rejected:", errors.Is(err, context.Canceled))
+
+	// Output:
+	// accepted: true
+	// rejected: true
+}
+
+// ExampleAnchorResult shows how a caller consumes an AnchorResult.
+// AnchorResult is an output type — AnchorPeriod fills in every field, so a
+// caller sets none of them — but not every successful call fills every
+// field. A fresh anchor (this call submitted it) returns all six; the
+// idempotent paths (already anchored, or an attempt confirmed before a
+// crash) return only the identifiers already recorded — PeriodID,
+// StatementSeq, and TxHash when the attempt had one — leaving AmountBilled
+// nil and UsageRoot zero, because no chain call was made to learn them
+// from. A caller reading those fields must handle both shapes; the zero
+// value itself never comes back from a successful call.
+//
+// AnchorPeriod itself is not called here: it needs Postgres, and examples
+// always run. The example instead builds the two shapes from the same
+// period — the fresh result's UsageRoot is a real merkle root over the
+// period's records — with fixed values so the Output is deterministic.
+// Production values come from the period's requests and the chain.
+func ExampleAnchorResult() {
+	records := []merkle.Record{
+		{
+			Amount:       big.NewInt(1000),
+			Consumer:     testConsumer,
+			EndpointHash: merkle.EndpointHash("GET", "/v1/inference"),
+			Ledger:       1500,
+			PriceVersion: 1,
+			RequestID:    [32]byte{0x01},
+			Units:        2,
+		},
+		{
+			Amount:       big.NewInt(2000),
+			Consumer:     testConsumer,
+			EndpointHash: merkle.EndpointHash("GET", "/v1/inference"),
+			Ledger:       1600,
+			PriceVersion: 1,
+			RequestID:    [32]byte{0x02},
+			Units:        1,
+		},
+	}
+	leaves := make([][32]byte, len(records))
+	for i, r := range records {
+		leaf, err := merkle.Leaf(r)
+		if err != nil {
+			log.Fatalf("merkle.Leaf: %v", err)
+		}
+		leaves[i] = leaf
+	}
+	tree, err := merkle.BuildTree(leaves)
+	if err != nil {
+		log.Fatalf("merkle.BuildTree: %v", err)
+	}
+
+	// Fresh anchor: every field is set, and UsageRoot is the root of the
+	// tree over the period's requests.
+	fresh := AnchorResult{
+		PeriodID:     42,
+		StatementSeq: 7,
+		TxHash:       "a1b2c3d4",
+		UsageRoot:    tree.Root,
+		RequestCount: uint64(len(records)),
+		AmountBilled: big.NewInt(3000),
+	}
+	fmt.Println("fresh anchor:")
+	fmt.Println("  statement seq:", fresh.StatementSeq)
+	fmt.Println("  requests:", fresh.RequestCount)
+	fmt.Println("  amount billed:", fresh.AmountBilled)
+	fmt.Println("  usage root set:", fresh.UsageRoot != [32]byte{})
+	fmt.Println("  tx hash:", fresh.TxHash)
+
+	// Already anchored: AnchorPeriod returns the recorded statement_seq
+	// with no chain call, so only these two fields are set.
+	prior := AnchorResult{PeriodID: 42, StatementSeq: 7}
+	fmt.Println("already anchored:")
+	fmt.Println("  statement seq:", prior.StatementSeq)
+	fmt.Println("  amount billed unset:", prior.AmountBilled == nil)
+	fmt.Println("  usage root unset:", prior.UsageRoot == [32]byte{})
+
+	// Output:
+	// fresh anchor:
+	//   statement seq: 7
+	//   requests: 2
+	//   amount billed: 3000
+	//   usage root set: true
+	//   tx hash: a1b2c3d4
+	// already anchored:
+	//   statement seq: 7
+	//   amount billed unset: true
+	//   usage root unset: true
+}
+
+// ExampleAnchorSubmitter shows how a caller obtains an AnchorSubmitter.
+// AnchorSubmitter is an interface, so a caller never constructs one — it
+// selects an implementation and hands it to Anchorer.AnchorPeriod, the one
+// caller, which makes the single method call. In production that
+// implementation is *stellar.StatementRegistry (asserted below at compile
+// time); in tests it is a fake, the implementation exercised here because
+// the real one would need a live Soroban RPC endpoint. The zero value is a
+// nil interface: calling through it panics, which is why AnchorPeriod
+// takes the registry as a required argument rather than defaulting to one.
+func ExampleAnchorSubmitter() {
+	// Compile-time proof the production implementation satisfies the
+	// interface — this line stops compiling if Anchor's signature ever
+	// drifts from *stellar.StatementRegistry's method.
+	var _ AnchorSubmitter = (*stellar.StatementRegistry)(nil)
+
+	// The same single method, implemented in memory: exactly the call
+	// AnchorPeriod makes.
+	fake := &fakeAnchorSubmitter{seq: 7, hash: "a1b2c3d4"}
+	seq, txHash, err := fake.Anchor(context.Background(), nil, testConsumer, 1000, 1999,
+		[32]byte{0xAA}, 2, "CTOKEN", big.NewInt(3000), big.NewInt(3000), 1, stellar.ProtocolX402, nil)
+	if err != nil {
+		log.Fatalf("Anchor: %v", err)
+	}
+	fmt.Println("statement seq:", seq)
+	fmt.Println("tx hash:", txHash)
+
+	// The zero value: an AnchorSubmitter left unwired.
+	var unwired AnchorSubmitter
+	fmt.Println("zero value is nil:", unwired == nil)
+
+	// Output:
+	// statement seq: 7
+	// tx hash: a1b2c3d4
+	// zero value is nil: true
+}
+
+// ExampleAnchorer shows how a caller wires and uses an Anchorer. The type
+// has a single unexported field — the pool it reads closed periods and
+// their requests through — so a caller sets no fields directly; NewAnchorer
+// is the only construction path, and it supplies that one dependency.
+// AnchorPeriod is the entry point once wired: it anchors one closed
+// period's usage root on chain. The zero value leaves the pool unset, so
+// there is nothing for AnchorPeriod to read a period through — the type is
+// built through the constructor, never as a bare struct literal.
+func ExampleAnchorer() {
+	// pgxpool.New opens no connection itself — connections are created
+	// lazily on first use — so no database needs to be reachable here.
+	pool, err := pgxpool.New(context.Background(), "postgres://tallybook:tallybook@localhost:5433/tallybook?sslmode=disable")
+	if err != nil {
+		panic(err)
+	}
+	defer pool.Close()
+
+	// How a caller constructs it: NewAnchorer supplies the pool.
+	a := NewAnchorer(pool)
+
+	// How a caller uses it: AnchorPeriod anchors a closed period. The
+	// cancelled context is refused by the pool's acquire step before any
+	// connection is opened, keeping this example runnable with or without
+	// Postgres; the nil signer and registry are never reached.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = a.AnchorPeriod(ctx, 1, nil, nil, "", big.NewInt(0))
+	fmt.Println("constructed:", a != nil)
+	fmt.Println("cancelled context honoured:", errors.Is(err, context.Canceled))
+
+	// The zero value: no pool was ever supplied.
+	var zero Anchorer
+	fmt.Println("zero value pool unset:", zero.pool == nil)
+
+	// Output:
+	// constructed: true
+	// cancelled context honoured: true
+	// zero value pool unset: true
+}
+
 type anchorCall struct {
 	consumer                    string
 	periodStart, periodEnd      uint32
@@ -305,201 +504,33 @@ func TestAnchorPeriod_ErrorLeavesPeriodClosedNotAnchored(t *testing.T) {
 	}
 }
 
-// ExampleNewAnchorer shows both halves of NewAnchorer's contract.
-// NewAnchorer itself never fails — it has no error return and stores pool
-// verbatim (see its doc comment) — so the rejection half only exists at the
-// first call that reads through the pool. A cancelled context is refused by
-// the pool's own acquire step before any connection is opened, keeping this
-// example runnable with or without Postgres; the returned error wraps
-// context.Canceled, identified with errors.Is rather than by comparing its
-// message.
-func ExampleNewAnchorer() {
-	// pgxpool.New opens no connection itself — connections are created
-	// lazily on first use — so no database needs to be reachable here.
+// ExampleAnchorer_AnchorPeriod shows how a caller anchors a closed period
+// with Anchorer.AnchorPeriod. Because calling it against a real database
+// requires a live Postgres instance and a Soroban RPC node, this example
+// demonstrates the parameter validation contract using a cancelled context
+// and a concrete literal input, which is refused by the pool's acquire step
+// before any connection is opened, keeping the example runnable without
+// requiring an active database or network connection.
+func ExampleAnchorer_AnchorPeriod() {
 	pool, err := pgxpool.New(context.Background(), "postgres://tallybook:tallybook@localhost:5433/tallybook?sslmode=disable")
 	if err != nil {
 		panic(err)
 	}
 	defer pool.Close()
 
-	// Accepted input: a pool to anchor closed periods through.
-	a := NewAnchorer(pool)
-	fmt.Println("accepted:", a != nil)
-
-	// Rejected input: a context that is already cancelled. AnchorPeriod's
-	// first action is to fetch the period through pool, which refuses the
-	// cancelled context before ever connecting; the nil signer and registry
-	// are never reached.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = a.AnchorPeriod(ctx, 1, nil, nil, "", big.NewInt(0))
-	fmt.Println("rejected:", errors.Is(err, context.Canceled))
-
-	// Output:
-	// accepted: true
-	// rejected: true
-}
-
-// ExampleAnchorResult shows how a caller consumes an AnchorResult.
-// AnchorResult is an output type — AnchorPeriod fills in every field, so a
-// caller sets none of them — but not every successful call fills every
-// field. A fresh anchor (this call submitted it) returns all six; the
-// idempotent paths (already anchored, or an attempt confirmed before a
-// crash) return only the identifiers already recorded — PeriodID,
-// StatementSeq, and TxHash when the attempt had one — leaving AmountBilled
-// nil and UsageRoot zero, because no chain call was made to learn them
-// from. A caller reading those fields must handle both shapes; the zero
-// value itself never comes back from a successful call.
-//
-// AnchorPeriod itself is not called here: it needs Postgres, and examples
-// always run. The example instead builds the two shapes from the same
-// period — the fresh result's UsageRoot is a real merkle root over the
-// period's records — with fixed values so the Output is deterministic.
-// Production values come from the period's requests and the chain.
-func ExampleAnchorResult() {
-	records := []merkle.Record{
-		{
-			Amount:       big.NewInt(1000),
-			Consumer:     testConsumer,
-			EndpointHash: merkle.EndpointHash("GET", "/v1/inference"),
-			Ledger:       1500,
-			PriceVersion: 1,
-			RequestID:    [32]byte{0x01},
-			Units:        2,
-		},
-		{
-			Amount:       big.NewInt(2000),
-			Consumer:     testConsumer,
-			EndpointHash: merkle.EndpointHash("GET", "/v1/inference"),
-			Ledger:       1600,
-			PriceVersion: 1,
-			RequestID:    [32]byte{0x02},
-			Units:        1,
-		},
-	}
-	leaves := make([][32]byte, len(records))
-	for i, r := range records {
-		leaf, err := merkle.Leaf(r)
-		if err != nil {
-			log.Fatalf("merkle.Leaf: %v", err)
-		}
-		leaves[i] = leaf
-	}
-	tree, err := merkle.BuildTree(leaves)
-	if err != nil {
-		log.Fatalf("merkle.BuildTree: %v", err)
-	}
-
-	// Fresh anchor: every field is set, and UsageRoot is the root of the
-	// tree over the period's requests.
-	fresh := AnchorResult{
-		PeriodID:     42,
-		StatementSeq: 7,
-		TxHash:       "a1b2c3d4",
-		UsageRoot:    tree.Root,
-		RequestCount: uint64(len(records)),
-		AmountBilled: big.NewInt(3000),
-	}
-	fmt.Println("fresh anchor:")
-	fmt.Println("  statement seq:", fresh.StatementSeq)
-	fmt.Println("  requests:", fresh.RequestCount)
-	fmt.Println("  amount billed:", fresh.AmountBilled)
-	fmt.Println("  usage root set:", fresh.UsageRoot != [32]byte{})
-	fmt.Println("  tx hash:", fresh.TxHash)
-
-	// Already anchored: AnchorPeriod returns the recorded statement_seq
-	// with no chain call, so only these two fields are set.
-	prior := AnchorResult{PeriodID: 42, StatementSeq: 7}
-	fmt.Println("already anchored:")
-	fmt.Println("  statement seq:", prior.StatementSeq)
-	fmt.Println("  amount billed unset:", prior.AmountBilled == nil)
-	fmt.Println("  usage root unset:", prior.UsageRoot == [32]byte{})
-
-	// Output:
-	// fresh anchor:
-	//   statement seq: 7
-	//   requests: 2
-	//   amount billed: 3000
-	//   usage root set: true
-	//   tx hash: a1b2c3d4
-	// already anchored:
-	//   statement seq: 7
-	//   amount billed unset: true
-	//   usage root unset: true
-}
-
-// ExampleAnchorSubmitter shows how a caller obtains an AnchorSubmitter.
-// AnchorSubmitter is an interface, so a caller never constructs one — it
-// selects an implementation and hands it to Anchorer.AnchorPeriod, the one
-// caller, which makes the single method call. In production that
-// implementation is *stellar.StatementRegistry (asserted below at compile
-// time); in tests it is a fake, the implementation exercised here because
-// the real one would need a live Soroban RPC endpoint. The zero value is a
-// nil interface: calling through it panics, which is why AnchorPeriod
-// takes the registry as a required argument rather than defaulting to one.
-func ExampleAnchorSubmitter() {
-	// Compile-time proof the production implementation satisfies the
-	// interface — this line stops compiling if Anchor's signature ever
-	// drifts from *stellar.StatementRegistry's method.
-	var _ AnchorSubmitter = (*stellar.StatementRegistry)(nil)
-
-	// The same single method, implemented in memory: exactly the call
-	// AnchorPeriod makes.
-	fake := &fakeAnchorSubmitter{seq: 7, hash: "a1b2c3d4"}
-	seq, txHash, err := fake.Anchor(context.Background(), nil, testConsumer, 1000, 1999,
-		[32]byte{0xAA}, 2, "CTOKEN", big.NewInt(3000), big.NewInt(3000), 1, stellar.ProtocolX402, nil)
-	if err != nil {
-		log.Fatalf("Anchor: %v", err)
-	}
-	fmt.Println("statement seq:", seq)
-	fmt.Println("tx hash:", txHash)
-
-	// The zero value: an AnchorSubmitter left unwired.
-	var unwired AnchorSubmitter
-	fmt.Println("zero value is nil:", unwired == nil)
-
-	// Output:
-	// statement seq: 7
-	// tx hash: a1b2c3d4
-	// zero value is nil: true
-}
-
-// ExampleAnchorer shows how a caller wires and uses an Anchorer. The type
-// has a single unexported field — the pool it reads closed periods and
-// their requests through — so a caller sets no fields directly; NewAnchorer
-// is the only construction path, and it supplies that one dependency.
-// AnchorPeriod is the entry point once wired: it anchors one closed
-// period's usage root on chain. The zero value leaves the pool unset, so
-// there is nothing for AnchorPeriod to read a period through — the type is
-// built through the constructor, never as a bare struct literal.
-func ExampleAnchorer() {
-	// pgxpool.New opens no connection itself — connections are created
-	// lazily on first use — so no database needs to be reachable here.
-	pool, err := pgxpool.New(context.Background(), "postgres://tallybook:tallybook@localhost:5433/tallybook?sslmode=disable")
-	if err != nil {
-		panic(err)
-	}
-	defer pool.Close()
-
-	// How a caller constructs it: NewAnchorer supplies the pool.
 	a := NewAnchorer(pool)
 
-	// How a caller uses it: AnchorPeriod anchors a closed period. The
-	// cancelled context is refused by the pool's acquire step before any
-	// connection is opened, keeping this example runnable with or without
-	// Postgres; the nil signer and registry are never reached.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = a.AnchorPeriod(ctx, 1, nil, nil, "", big.NewInt(0))
-	fmt.Println("constructed:", a != nil)
-	fmt.Println("cancelled context honoured:", errors.Is(err, context.Canceled))
 
-	// The zero value: no pool was ever supplied.
-	var zero Anchorer
-	fmt.Println("zero value pool unset:", zero.pool == nil)
+	// Concrete literal inputs passed directly to Anchorer.AnchorPeriod.
+	periodID := int64(1)
+	token := "CTOKEN"
+	amountBilled := big.NewInt(3000)
+
+	_, err = a.AnchorPeriod(ctx, periodID, nil, nil, token, amountBilled)
+	fmt.Println("anchored with concrete inputs, cancelled context honoured:", errors.Is(err, context.Canceled))
 
 	// Output:
-	// constructed: true
-	// cancelled context honoured: true
-	// zero value pool unset: true
+	// anchored with concrete inputs, cancelled context honoured: true
 }
