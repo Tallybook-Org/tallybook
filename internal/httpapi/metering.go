@@ -1,10 +1,10 @@
 // Package httpapi is the collector's HTTP surface: the metering middleware
-// that wraps a paid API, records every request, and prices it against the
-// operator's published schedule (§1). It authenticates and verifies payment
-// for nothing — that is a facilitator's job, explicitly out of scope here
-// (§1's non-goals) — it only meters requests that reach it, trusting
-// whatever upstream middleware already decided the caller is allowed to be
-// here.
+// that wraps a paid API, records every request, prices it against the
+// operator's published schedule, and files it under the billing period it
+// belongs to (§1). It authenticates and verifies payment for nothing —
+// that is a facilitator's job, explicitly out of scope here (§1's
+// non-goals) — it only meters requests that reach it, trusting whatever
+// upstream middleware already decided the caller is allowed to be here.
 package httpapi
 
 import (
@@ -37,6 +37,37 @@ type LedgerSource interface {
 	CurrentLedger(ctx context.Context) (uint32, error)
 }
 
+// CatalogSource resolves the price catalog an operator has published — the
+// versioned schedule history the requests are priced against
+// (internal/meter's Catalog). Implemented in production by a reader that
+// fetches the operator's price_book versions from the chain and their
+// schedule documents over HTTP; a narrow interface here keeps this package
+// from depending on either.
+//
+// The middleware resolves exactly one catalog per request and uses it for
+// both the price it charges and the billing period the request belongs
+// to. That is deliberate: the two must agree on which price book version
+// was effective at the request's ledger, or the amount charged and the
+// version the period is recorded under would disagree — and a statement
+// whose period and amounts disagree is one the chain rejects.
+type CatalogSource interface {
+	CatalogFor(ctx context.Context, operator string) (*meter.Catalog, error)
+}
+
+// PeriodOpener returns the billing period a request observed at ledger
+// belongs to, opening one if none is open yet and closing the open one if
+// the price book version in effect has changed (meter.PeriodCloser).
+// Implemented by internal/meter's PeriodCloser in production; a narrow
+// interface here keeps this package from depending on the database
+// driver directly.
+//
+// Every recorded request belongs to a period: the periods are what the
+// operator's statements are built from, so a request with no period would
+// be revenue that can never be billed.
+type PeriodOpener interface {
+	EnsureOpenPeriod(ctx context.Context, scope meter.Scope, ledger uint32, catalog *meter.Catalog) (*meter.Period, error)
+}
+
 // Recorder persists one metered request. Implemented by internal/store's
 // request-persistence type in production; a narrow interface here keeps
 // this package from depending on the database driver directly.
@@ -59,6 +90,11 @@ type RecordedRequest struct {
 	Protocol       string
 	Channel        string // non-empty iff Protocol == ProtocolMPPSession
 	ObservedLedger uint32
+	// PeriodID is the billing period this request rolls up into. It is
+	// set by the middleware, never by the caller: the middleware opens the
+	// period (or finds the open one) before recording, so a request is
+	// always recorded against the period its amount was priced under.
+	PeriodID int64
 }
 
 // RequestInfo is what the metering middleware needs to know about the
@@ -139,9 +175,16 @@ type Config struct {
 	// same (method, path_template) pair.
 	Method       string
 	PathTemplate string
-	Pricer       *meter.Pricer
-	Ledger       LedgerSource
-	Recorder     Recorder
+	// Catalogs resolves the operator's published price schedule, and
+	// Periods opens (or finds) the billing period the request belongs to.
+	// Both are required: a request that cannot be priced, or that has no
+	// period to roll up into, is revenue the operator can never bill, so
+	// the middleware fails the request closed rather than serving it
+	// unmetered.
+	Catalogs CatalogSource
+	Ledger   LedgerSource
+	Recorder Recorder
+	Periods  PeriodOpener
 	// UnitCount overrides the default of one unit per request. The product
 	// is "settlement bookkeeping for services that charge per HTTP
 	// request" (README, §1) — one unit per request is what an operator
@@ -161,8 +204,8 @@ func (cfg Config) validate() error {
 	if cfg.PathTemplate == "" {
 		return errors.New("httpapi: metering config: path template is empty")
 	}
-	if cfg.Pricer == nil {
-		return errors.New("httpapi: metering config: pricer is nil")
+	if cfg.Catalogs == nil {
+		return errors.New("httpapi: metering config: catalog source is nil")
 	}
 	if cfg.Ledger == nil {
 		return errors.New("httpapi: metering config: ledger source is nil")
@@ -170,28 +213,32 @@ func (cfg Config) validate() error {
 	if cfg.Recorder == nil {
 		return errors.New("httpapi: metering config: recorder is nil")
 	}
+	if cfg.Periods == nil {
+		return errors.New("httpapi: metering config: period opener is nil")
+	}
 	return nil
 }
 
 // Middleware returns a handler that meters every request that reaches next:
 // determines the current ledger, prices the request against the operator's
-// published schedule, durably records the charge, and only then calls
-// next. It returns an error instead of panicking if cfg is incomplete —
-// this is startup-time wiring, and a missing dependency here is exactly
-// the kind of "fail fast, name the problem" startup validation §8 asks
-// for, not a condition to discover from a stack trace during a request.
+// published schedule, opens (or finds) the billing period the request
+// belongs to, durably records the charge, and only then calls next. It
+// returns an error instead of panicking if cfg is incomplete — this is
+// startup-time wiring, and a missing dependency here is exactly the kind
+// of "fail fast, name the problem" startup validation §8 asks for, not a
+// condition to discover from a stack trace during a request.
 //
 // Recording happens before next runs, not after. This package's job is to
 // produce an accurate, complete billing record for every request that
 // reaches the wrapped API; "served but never recorded" is a worse failure
-// than "rejected before being served", so a LedgerSource, Pricer, or
-// Recorder error fails the request closed (500, next is never called)
-// rather than serving it unmetered. Because pricing does not depend on
-// anything the wrapped handler produces — the default unit count is fixed
-// at one request per unit, and a caller-supplied UnitCount reads only the
-// incoming request, never the response — this ordering costs nothing: an
-// unpriceable request is rejected before any work is done on its behalf,
-// not after.
+// than "rejected before being served", so a LedgerSource, CatalogSource,
+// PeriodOpener, or Recorder error fails the request closed (500, next is
+// never called) rather than serving it unmetered. Because pricing does not
+// depend on anything the wrapped handler produces — the default unit count
+// is fixed at one request per unit, and a caller-supplied UnitCount reads
+// only the incoming request, never the response — this ordering costs
+// nothing: an unpriceable request is rejected before any work is done on
+// its behalf, not after.
 func Middleware(cfg Config) (func(http.Handler) http.Handler, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -225,11 +272,39 @@ func Middleware(cfg Config) (func(http.Handler) http.Handler, error) {
 				return
 			}
 
+			// One catalog for the whole request: the price the request is
+			// charged and the period it rolls up into have to be decided
+			// against the same price book version, or the amount charged
+			// and the version the period is recorded under disagree — and
+			// a statement whose amounts and period disagree is one the
+			// chain rejects.
+			catalog, err := cfg.Catalogs.CatalogFor(ctx, cfg.Operator)
+			if err != nil {
+				slog.ErrorContext(ctx, "httpapi: metering: resolve price catalog",
+					"operator", cfg.Operator, "error", err)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
+
 			units := unitCount(r)
-			priced, err := cfg.Pricer.Price(ledger, cfg.Method, cfg.PathTemplate, units)
+			priced, err := catalog.Price(ledger, cfg.Method, cfg.PathTemplate, units)
 			if err != nil {
 				slog.ErrorContext(ctx, "httpapi: metering: price request",
 					"method", cfg.Method, "path_template", cfg.PathTemplate, "ledger", ledger, "units", units, "error", err)
+				http.Error(w, "internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			scope := meter.Scope{
+				Operator: cfg.Operator,
+				Consumer: info.Consumer,
+				Protocol: info.Protocol,
+				Channel:  info.Channel,
+			}
+			period, err := cfg.Periods.EnsureOpenPeriod(ctx, scope, ledger, catalog)
+			if err != nil {
+				slog.ErrorContext(ctx, "httpapi: metering: open billing period",
+					"method", cfg.Method, "path_template", cfg.PathTemplate, "ledger", ledger, "error", err)
 				http.Error(w, "internal server error", http.StatusInternalServerError)
 				return
 			}
@@ -254,6 +329,7 @@ func Middleware(cfg Config) (func(http.Handler) http.Handler, error) {
 				Protocol:       info.Protocol,
 				Channel:        info.Channel,
 				ObservedLedger: ledger,
+				PeriodID:       period.ID,
 			}
 
 			if err := cfg.Recorder.RecordRequest(ctx, rec); err != nil {

@@ -130,6 +130,33 @@ type PricedRequest struct {
 	PriceVersion  uint32
 }
 
+// Price computes the charge for one request of units units against
+// method+pathTemplate, using whichever price book version was effective
+// at ledger. It returns ErrNoVersionAt if ledger predates every published
+// version, or ErrUnknownEndpoint if the version effective at ledger has no
+// rule for this endpoint.
+//
+// This is the whole of Pricer's behaviour, expressed on the catalog
+// itself, so a caller that already holds a catalog — the metering
+// middleware, which resolves one catalog per request and uses it both to
+// price the request and to decide which billing period the request
+// belongs to — reaches it without building a Pricer first.
+func (c *Catalog) Price(ledger uint32, method, pathTemplate string, units uint64) (*PricedRequest, error) {
+	version, err := c.VersionAt(ledger)
+	if err != nil {
+		return nil, fmt.Errorf("meter: price: %w", err)
+	}
+
+	unitPrice, ok := version.Schedule.Lookup(method, pathTemplate)
+	if !ok {
+		return nil, fmt.Errorf("meter: price: %w: %s %s (price book version %d)",
+			ErrUnknownEndpoint, method, pathTemplate, version.Version)
+	}
+
+	amount := new(big.Int).Mul(unitPrice, new(big.Int).SetUint64(units))
+	return &PricedRequest{ChargedAmount: amount, PriceVersion: version.Version}, nil
+}
+
 // Pricer prices individual requests against a Catalog.
 type Pricer struct {
 	catalog *Catalog
@@ -146,17 +173,5 @@ func NewPricer(catalog *Catalog) *Pricer {
 // version, or ErrUnknownEndpoint if the version effective at ledger has no
 // rule for this endpoint.
 func (p *Pricer) Price(ledger uint32, method, pathTemplate string, units uint64) (*PricedRequest, error) {
-	version, err := p.catalog.VersionAt(ledger)
-	if err != nil {
-		return nil, fmt.Errorf("meter: price: %w", err)
-	}
-
-	unitPrice, ok := version.Schedule.Lookup(method, pathTemplate)
-	if !ok {
-		return nil, fmt.Errorf("meter: price: %w: %s %s (price book version %d)",
-			ErrUnknownEndpoint, method, pathTemplate, version.Version)
-	}
-
-	amount := new(big.Int).Mul(unitPrice, new(big.Int).SetUint64(units))
-	return &PricedRequest{ChargedAmount: amount, PriceVersion: version.Version}, nil
+	return p.catalog.Price(ledger, method, pathTemplate, units)
 }

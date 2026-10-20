@@ -1,0 +1,474 @@
+package pricebook
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/Tallybook-Org/tallybook/internal/meter"
+	"github.com/Tallybook-Org/tallybook/internal/stellar"
+)
+
+const testOperator = "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM"
+
+// fakeBook is a VersionReader backed by an in-memory price book, counting
+// the calls it receives so a test can assert the cache did — or did not
+// — keep a request off the chain.
+type fakeBook struct {
+	mu sync.Mutex
+	// versions maps a version number to the record the chain would hold.
+	versions map[uint32]*stellar.PriceBookVersion
+	// latest is what Latest reports.
+	latest uint32
+	// latestErr, when set, is returned by Latest.
+	latestErr error
+	// latestCalls counts Latest calls.
+	latestCalls int
+	// getCalls counts GetVersion calls.
+	getCalls int
+}
+
+func newFakeBook(versions ...*stellar.PriceBookVersion) *fakeBook {
+	book := &fakeBook{versions: make(map[uint32]*stellar.PriceBookVersion)}
+	for _, v := range versions {
+		book.versions[v.Version] = v
+		if v.Version > book.latest {
+			book.latest = v.Version
+		}
+	}
+	return book
+}
+
+func (b *fakeBook) Latest(_ context.Context, _ string) (uint32, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.latestCalls++
+	if b.latestErr != nil {
+		return 0, b.latestErr
+	}
+	return b.latest, nil
+}
+
+func (b *fakeBook) GetVersion(_ context.Context, _ string, version uint32) (*stellar.PriceBookVersion, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.getCalls++
+	v, ok := b.versions[version]
+	if !ok {
+		return nil, fmt.Errorf("no such version %d", version)
+	}
+	return v, nil
+}
+
+func (b *fakeBook) counts() (latest, get int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.latestCalls, b.getCalls
+}
+
+// scheduleDoc is a minimal, valid price schedule document.
+func scheduleDoc(unitPrice string) []byte {
+	return []byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"` + unitPrice + `"}]}`)
+}
+
+// published builds the chain record for a version, with the hash its
+// document actually has.
+func published(version uint32, effectiveLedger uint32, doc []byte, uri string) *stellar.PriceBookVersion {
+	return &stellar.PriceBookVersion{
+		Operator:        testOperator,
+		Version:         version,
+		ScheduleHash:    meter.ScheduleHash(doc),
+		URI:             uri,
+		EffectiveLedger: effectiveLedger,
+		PublishedLedger: effectiveLedger - 1,
+	}
+}
+
+func TestSource_CatalogFor_AssemblesVerifiedSchedule(t *testing.T) {
+	doc := scheduleDoc("1000")
+	book := newFakeBook(published(1, 1000, doc, "https://example.com/schedule.json"))
+
+	var fetched []string
+	source, err := NewSource(Config{
+		Book: book,
+		Fetch: func(_ context.Context, uri string) ([]byte, error) {
+			fetched = append(fetched, uri)
+			return doc, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewSource returned unexpected error: %v", err)
+	}
+
+	catalog, err := source.CatalogFor(context.Background(), testOperator)
+	if err != nil {
+		t.Fatalf("CatalogFor returned unexpected error: %v", err)
+	}
+
+	version, err := catalog.VersionAt(1500)
+	if err != nil {
+		t.Fatalf("VersionAt returned unexpected error: %v", err)
+	}
+	if version.Version != 1 {
+		t.Errorf("version = %d, want 1", version.Version)
+	}
+	price, ok := version.Schedule.Lookup("GET", "/v1/items")
+	if !ok {
+		t.Fatal("no rule for GET /v1/items")
+	}
+	if price.Cmp(big.NewInt(1000)) != 0 {
+		t.Errorf("unit price = %s, want 1000", price)
+	}
+	if len(fetched) != 1 || fetched[0] != "https://example.com/schedule.json" {
+		t.Errorf("fetched = %v, want the published URI once", fetched)
+	}
+}
+
+func TestSource_CatalogFor_RejectsHashMismatch(t *testing.T) {
+	publishedDoc := scheduleDoc("1000")
+	// The chain records the hash of the document as published; what the
+	// URI serves is a different document entirely.
+	book := newFakeBook(published(1, 1000, publishedDoc, "https://example.com/schedule.json"))
+
+	source, err := NewSource(Config{
+		Book: book,
+		Fetch: func(context.Context, string) ([]byte, error) {
+			return scheduleDoc("999999"), nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewSource returned unexpected error: %v", err)
+	}
+
+	_, err = source.CatalogFor(context.Background(), testOperator)
+	if !errors.Is(err, ErrScheduleHashMismatch) {
+		t.Fatalf("CatalogFor error = %v, want ErrScheduleHashMismatch", err)
+	}
+}
+
+func TestSource_CatalogFor_RejectsUnparseableSchedule(t *testing.T) {
+	doc := []byte("not json")
+	book := newFakeBook(published(1, 1000, doc, "https://example.com/schedule.json"))
+
+	source, err := NewSource(Config{
+		Book:  book,
+		Fetch: func(context.Context, string) ([]byte, error) { return doc, nil },
+	})
+	if err != nil {
+		t.Fatalf("NewSource returned unexpected error: %v", err)
+	}
+
+	_, err = source.CatalogFor(context.Background(), testOperator)
+	if err == nil {
+		t.Fatal("CatalogFor accepted a document that is not a schedule")
+	}
+	if !strings.Contains(err.Error(), "parse schedule") {
+		t.Errorf("error = %v, want it to name the parse failure", err)
+	}
+}
+
+func TestSource_CatalogFor_NoPublishedVersions(t *testing.T) {
+	source, err := NewSource(Config{
+		Book:  newFakeBook(),
+		Fetch: func(context.Context, string) ([]byte, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatalf("NewSource returned unexpected error: %v", err)
+	}
+
+	_, err = source.CatalogFor(context.Background(), testOperator)
+	if !errors.Is(err, ErrNoVersions) {
+		t.Fatalf("CatalogFor error = %v, want ErrNoVersions", err)
+	}
+}
+
+func TestSource_CatalogFor_CachesBetweenCalls(t *testing.T) {
+	doc := scheduleDoc("1000")
+	book := newFakeBook(published(1, 1000, doc, "https://example.com/schedule.json"))
+
+	fetches := 0
+	source, err := NewSource(Config{
+		Book: book,
+		Fetch: func(context.Context, string) ([]byte, error) {
+			fetches++
+			return doc, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewSource returned unexpected error: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		if _, err := source.CatalogFor(context.Background(), testOperator); err != nil {
+			t.Fatalf("CatalogFor returned unexpected error: %v", err)
+		}
+	}
+
+	if fetches != 1 {
+		t.Errorf("fetched %d documents, want 1 — the catalog should be cached", fetches)
+	}
+	latest, get := book.counts()
+	if latest != 1 {
+		t.Errorf("Latest called %d times, want 1 — the catalog should be cached", latest)
+	}
+	if get != 1 {
+		t.Errorf("GetVersion called %d times, want 1", get)
+	}
+}
+
+// TestSource_Refresh_PicksUpNewVersion covers the case that matters
+// most for pricing: the operator publishes a new schedule version, and
+// the next refresh must include it — with the older version still in
+// the catalog, since requests observed before the new version took
+// effect are priced against it.
+func TestSource_Refresh_PicksUpNewVersion(t *testing.T) {
+	firstDoc := scheduleDoc("1000")
+	secondDoc := scheduleDoc("2000")
+	book := newFakeBook(published(1, 1000, firstDoc, "https://example.com/v1.json"))
+
+	source, err := NewSource(Config{
+		Book: book,
+		Fetch: func(_ context.Context, uri string) ([]byte, error) {
+			if uri == "https://example.com/v1.json" {
+				return firstDoc, nil
+			}
+			return secondDoc, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewSource returned unexpected error: %v", err)
+	}
+
+	catalog, err := source.CatalogFor(context.Background(), testOperator)
+	if err != nil {
+		t.Fatalf("CatalogFor returned unexpected error: %v", err)
+	}
+	if v, err := catalog.VersionAt(1500); err != nil || v.Version != 1 {
+		t.Fatalf("version at 1500 = %v, %v; want 1", v, err)
+	}
+
+	// The operator publishes version 2, effective from ledger 2000.
+	book.mu.Lock()
+	book.versions[2] = published(2, 2000, secondDoc, "https://example.com/v2.json")
+	book.latest = 2
+	book.mu.Unlock()
+
+	catalog, err = source.Refresh(context.Background(), testOperator)
+	if err != nil {
+		t.Fatalf("Refresh returned unexpected error: %v", err)
+	}
+	if v, err := catalog.VersionAt(1500); err != nil || v.Version != 1 {
+		t.Errorf("version at 1500 = %v, %v; want 1 — the old version still prices the ledgers before 2000", v, err)
+	}
+	v, err := catalog.VersionAt(2500)
+	if err != nil {
+		t.Fatalf("VersionAt(2500) returned unexpected error: %v", err)
+	}
+	if v.Version != 2 {
+		t.Errorf("version at 2500 = %d, want 2", v.Version)
+	}
+	price, ok := v.Schedule.Lookup("GET", "/v1/items")
+	if !ok || price.Cmp(big.NewInt(2000)) != 0 {
+		t.Errorf("unit price of version 2 = %v (%v), want 2000", price, ok)
+	}
+}
+
+func TestSource_Refresh_RejectsVersionGoingBackwards(t *testing.T) {
+	doc := scheduleDoc("1000")
+	book := newFakeBook(published(1, 1000, doc, "https://example.com/schedule.json"))
+
+	source, err := NewSource(Config{
+		Book:  book,
+		Fetch: func(context.Context, string) ([]byte, error) { return doc, nil },
+	})
+	if err != nil {
+		t.Fatalf("NewSource returned unexpected error: %v", err)
+	}
+	if _, err := source.CatalogFor(context.Background(), testOperator); err != nil {
+		t.Fatalf("CatalogFor returned unexpected error: %v", err)
+	}
+
+	// The chain now reports version 2, and the source picks it up.
+	book.mu.Lock()
+	book.versions[2] = published(2, 2000, doc, "https://example.com/v2.json")
+	book.latest = 2
+	book.mu.Unlock()
+	if _, err := source.Refresh(context.Background(), testOperator); err != nil {
+		t.Fatalf("Refresh returned unexpected error: %v", err)
+	}
+
+	// And then reports version 1 again — a price book that un-publishes.
+	// Continuing would price requests against a schedule that may no
+	// longer be the operator's.
+	book.mu.Lock()
+	book.latest = 1
+	book.mu.Unlock()
+	_, err = source.Refresh(context.Background(), testOperator)
+	if !errors.Is(err, ErrVersionWentBackwards) {
+		t.Fatalf("Refresh error = %v, want ErrVersionWentBackwards", err)
+	}
+}
+
+// TestSource_CatalogFor_RefreshesStaleCacheInBackground covers the
+// staleness policy: a cached catalog is served even when it has gone
+// stale, and a refresh is started behind it — a request must not become
+// latency-bound on a chain read.
+func TestSource_CatalogFor_RefreshesStaleCacheInBackground(t *testing.T) {
+	doc := scheduleDoc("1000")
+	book := newFakeBook(published(1, 1000, doc, "https://example.com/schedule.json"))
+
+	now := time.Now()
+	source, err := NewSource(Config{
+		Book:  book,
+		Fetch: func(context.Context, string) ([]byte, error) { return doc, nil },
+		TTL:   time.Minute,
+		Now:   func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("NewSource returned unexpected error: %v", err)
+	}
+
+	if _, err := source.CatalogFor(context.Background(), testOperator); err != nil {
+		t.Fatalf("CatalogFor returned unexpected error: %v", err)
+	}
+
+	// Move the clock past the TTL. The next call must still return a
+	// catalog immediately — and must start a background refresh.
+	now = now.Add(2 * time.Minute)
+	catalog, err := source.CatalogFor(context.Background(), testOperator)
+	if err != nil {
+		t.Fatalf("CatalogFor returned unexpected error: %v", err)
+	}
+	if catalog == nil {
+		t.Fatal("CatalogFor returned no catalog")
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		latest, _ := book.counts()
+		if latest >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the stale cache was never refreshed in the background")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestNewSource_RejectsMissingDependencies(t *testing.T) {
+	if _, err := NewSource(Config{Fetch: func(context.Context, string) ([]byte, error) { return nil, nil }}); err == nil {
+		t.Error("NewSource accepted a nil book")
+	}
+	if _, err := NewSource(Config{Book: newFakeBook()}); err == nil {
+		t.Error("NewSource accepted a nil fetch")
+	}
+}
+
+func TestHTTPFetcher_Fetch(t *testing.T) {
+	doc := scheduleDoc("1000")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/missing" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path == "/huge" {
+			_, _ = w.Write(make([]byte, 4096))
+			return
+		}
+		_, _ = w.Write(doc)
+	}))
+	defer server.Close()
+
+	fetcher := NewHTTPFetcher(server.Client())
+
+	got, err := fetcher.Fetch(context.Background(), server.URL+"/schedule.json")
+	if err != nil {
+		t.Fatalf("Fetch returned unexpected error: %v", err)
+	}
+	if string(got) != string(doc) {
+		t.Errorf("fetched %q, want %q", got, doc)
+	}
+
+	if _, err := fetcher.Fetch(context.Background(), server.URL+"/missing"); err == nil {
+		t.Error("Fetch accepted a 404 response")
+	}
+
+	small := &HTTPFetcher{Client: server.Client(), MaxBytes: 10}
+	if _, err := small.Fetch(context.Background(), server.URL+"/huge"); err == nil {
+		t.Error("Fetch accepted a body larger than its limit")
+	}
+}
+
+func TestHTTPFetcher_RejectsNonHTTPScheme(t *testing.T) {
+	fetcher := NewHTTPFetcher(nil)
+	for _, uri := range []string{"file:///etc/passwd", "ftp://example.com/schedule.json", "data:text/plain,hello"} {
+		if _, err := fetcher.Fetch(context.Background(), uri); !errors.Is(err, ErrUnsupportedScheme) {
+			t.Errorf("Fetch(%q) error = %v, want ErrUnsupportedScheme", uri, err)
+		}
+	}
+}
+
+// ExampleSource shows the two halves of a Source's contract: an
+// operator who has published a schedule gets a catalog whose prices come
+// from that schedule, and a document whose hash does not match what the
+// chain recorded is refused rather than priced against.
+func ExampleSource() {
+	doc := []byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"1000"}]}`)
+	book := &fakeBook{versions: map[uint32]*stellar.PriceBookVersion{
+		1: {
+			Operator:        testOperator,
+			Version:         1,
+			ScheduleHash:    meter.ScheduleHash(doc),
+			URI:             "https://example.com/schedule.json",
+			EffectiveLedger: 1000,
+		},
+	}, latest: 1}
+
+	source, err := NewSource(Config{
+		Book:  book,
+		Fetch: func(context.Context, string) ([]byte, error) { return doc, nil },
+	})
+	if err != nil {
+		fmt.Println("new source:", err)
+		return
+	}
+
+	catalog, err := source.CatalogFor(context.Background(), testOperator)
+	if err != nil {
+		fmt.Println("catalog:", err)
+		return
+	}
+	price, err := catalog.Price(1500, "GET", "/v1/items", 1)
+	if err != nil {
+		fmt.Println("price:", err)
+		return
+	}
+	fmt.Println("charged:", price.ChargedAmount, "price version:", price.PriceVersion)
+
+	// The same operator, but the document at the URI is not the one that
+	// was published: the hash no longer matches, so it is refused.
+	tampered, err := NewSource(Config{
+		Book: book,
+		Fetch: func(context.Context, string) ([]byte, error) {
+			return []byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"1"}]}`), nil
+		},
+	})
+	if err != nil {
+		fmt.Println("new source:", err)
+		return
+	}
+	_, err = tampered.CatalogFor(context.Background(), testOperator)
+	fmt.Println("tampered document rejected:", errors.Is(err, ErrScheduleHashMismatch))
+
+	// Output:
+	// charged: 1000 price version: 1
+	// tampered document rejected: true
+}
