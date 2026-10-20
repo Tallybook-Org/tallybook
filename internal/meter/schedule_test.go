@@ -229,7 +229,6 @@ func ExampleSchedule_Lookup() {
 	// price: 1000
 	// missing found: false
 }
-
 func TestScheduleHash_DeterministicAndSensitiveToContent(t *testing.T) {
 	a := []byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"1"}]}`)
 	b := []byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"2"}]}`)
