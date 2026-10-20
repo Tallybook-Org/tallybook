@@ -239,6 +239,126 @@ func TestRequestStore_RecordRequest_RejectsNilChargedAmount(t *testing.T) {
 	}
 }
 
+// TestRequestStore_RecordRequest_LinksThePeriod checks the column that
+// ties a metered request to the billing period it rolls up into: the
+// statements the operator anchors are built from a period's requests, so
+// a request recorded without its period is revenue that can never be
+// billed. A request with no period is written with a NULL period_id
+// rather than a zero, which is not a row in periods.
+func TestRequestStore_RecordRequest_LinksThePeriod(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	migrations, err := Migrations()
+	if err != nil {
+		t.Fatalf("Migrations returned unexpected error: %v", err)
+	}
+	if _, err := Migrate(ctx, pool, migrations); err != nil {
+		t.Fatalf("Migrate returned unexpected error: %v", err)
+	}
+
+	store := NewRequestStore(pool)
+
+	var periodID int64
+	err = pool.QueryRow(ctx, `
+		INSERT INTO periods (operator, consumer, protocol, channel, price_version, period_start, status)
+		VALUES ($1, $2, $3, NULL, 1, 1000, 'open') RETURNING id`,
+		"GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
+		"GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY",
+		httpapi.ProtocolX402,
+	).Scan(&periodID)
+	if err != nil {
+		t.Fatalf("insert period: %v", err)
+	}
+
+	var requestID [32]byte
+	copy(requestID[:], mustHexBytes(t, "ab"))
+	var endpointHash [32]byte
+	copy(endpointHash[:], mustHexBytes(t, "bc"))
+
+	req := httpapi.RecordedRequest{
+		RequestID:      requestID,
+		Operator:       "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
+		Consumer:       "GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY",
+		EndpointHash:   endpointHash,
+		Method:         "GET",
+		PathTemplate:   "/v1/items",
+		UnitCount:      1,
+		PriceVersion:   1,
+		ChargedAmount:  big.NewInt(1000),
+		Protocol:       httpapi.ProtocolX402,
+		ObservedLedger: 1500,
+		PeriodID:       periodID,
+	}
+
+	if err := store.RecordRequest(ctx, req); err != nil {
+		t.Fatalf("RecordRequest returned unexpected error: %v", err)
+	}
+
+	var gotPeriodID *int64
+	if err := pool.QueryRow(ctx, `SELECT period_id FROM requests WHERE request_id = $1`, req.RequestID[:]).
+		Scan(&gotPeriodID); err != nil {
+		t.Fatalf("query inserted row: %v", err)
+	}
+	if gotPeriodID == nil {
+		t.Fatal("period_id is NULL, want the period the request was filed under")
+	}
+	if *gotPeriodID != periodID {
+		t.Errorf("period_id = %d, want %d", *gotPeriodID, periodID)
+	}
+}
+
+// TestRequestStore_RecordRequest_WithoutAPeriodWritesNull covers the
+// other half: a request recorded with no period must land with a NULL
+// period_id, not with a zero that would fail the foreign key — and not
+// with a fabricated period either.
+func TestRequestStore_RecordRequest_WithoutAPeriodWritesNull(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	migrations, err := Migrations()
+	if err != nil {
+		t.Fatalf("Migrations returned unexpected error: %v", err)
+	}
+	if _, err := Migrate(ctx, pool, migrations); err != nil {
+		t.Fatalf("Migrate returned unexpected error: %v", err)
+	}
+
+	store := NewRequestStore(pool)
+
+	var requestID [32]byte
+	copy(requestID[:], mustHexBytes(t, "cd"))
+	var endpointHash [32]byte
+	copy(endpointHash[:], mustHexBytes(t, "de"))
+
+	req := httpapi.RecordedRequest{
+		RequestID:      requestID,
+		Operator:       "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
+		Consumer:       "GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY",
+		EndpointHash:   endpointHash,
+		Method:         "GET",
+		PathTemplate:   "/v1/items",
+		UnitCount:      1,
+		PriceVersion:   1,
+		ChargedAmount:  big.NewInt(1000),
+		Protocol:       httpapi.ProtocolX402,
+		ObservedLedger: 1500,
+	}
+
+	if err := store.RecordRequest(ctx, req); err != nil {
+		t.Fatalf("RecordRequest returned unexpected error: %v", err)
+	}
+
+	var gotPeriodID *int64
+	if err := pool.QueryRow(ctx, `SELECT period_id FROM requests WHERE request_id = $1`, req.RequestID[:]).
+		Scan(&gotPeriodID); err != nil {
+		t.Fatalf("query inserted row: %v", err)
+	}
+	if gotPeriodID != nil {
+		t.Errorf("period_id = %d, want NULL", *gotPeriodID)
+	}
+}
+
 func mustHexBytes(t *testing.T, suffix string) []byte {
 	t.Helper()
 	// Pads suffix out to 32 bytes (64 hex characters) with zeros so each

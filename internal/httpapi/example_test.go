@@ -19,8 +19,8 @@ type exampleRecorder struct{}
 func (exampleRecorder) RecordRequest(_ context.Context, req RecordedRequest) error {
 	fmt.Printf("%s %s consumer %s protocol %s channel %q\n",
 		req.Method, req.PathTemplate, req.Consumer, req.Protocol, req.Channel)
-	fmt.Printf("%d unit(s) charged %s stroops price v%d observed ledger %d\n",
-		req.UnitCount, req.ChargedAmount, req.PriceVersion, req.ObservedLedger)
+	fmt.Printf("%d unit(s) charged %s stroops price v%d observed ledger %d period %d\n",
+		req.UnitCount, req.ChargedAmount, req.PriceVersion, req.ObservedLedger, req.PeriodID)
 	fmt.Printf("endpoint hash %x\n", req.EndpointHash)
 	fmt.Printf("request id %x\n", req.RequestID)
 	return nil
@@ -43,7 +43,10 @@ func (exampleRecorder) RecordRequest(_ context.Context, req RecordedRequest) err
 // on (Config's doc comment). Channel is left at its zero value here because
 // Protocol is ProtocolX402; it is set if and only if Protocol is
 // ProtocolMPPSession, mirroring both RequestInfo.Validate and the
-// requests_channel_iff_session CHECK constraint (§5).
+// requests_channel_iff_session CHECK constraint (§5). PeriodID names the
+// billing period the request rolls up into — the middleware opens that
+// period (or finds the open one) before recording, so it is never
+// invented by a caller.
 //
 // The request ID and ledger number are fixed purely so the Output is
 // deterministic; production values come from crypto/rand and the
@@ -72,6 +75,7 @@ func ExampleRecordedRequest() {
 		// Channel left at its zero value: set only when Protocol is
 		// ProtocolMPPSession.
 		ObservedLedger: 1500,
+		PeriodID:       7,
 	}
 
 	recorder := exampleRecorder{}
@@ -81,7 +85,7 @@ func ExampleRecordedRequest() {
 	}
 	// Output:
 	// GET /v1/items consumer GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY protocol x402 channel ""
-	// 1 unit(s) charged 1000 stroops price v1 observed ledger 1500
+	// 1 unit(s) charged 1000 stroops price v1 observed ledger 1500 period 7
 	// endpoint hash 79a8cbca8c21b745b034907bd0d84cad5dc580f9370b446c9f4030d4e4affb03
 	// request id 6a1f00000000000000000000000000000000000000000000000000000000abcd
 }

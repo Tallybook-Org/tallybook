@@ -2882,5 +2882,305 @@
     ],
     "good_first_issue": true,
     "entry_point": "internal/meter/period.go"
+  },
+  {
+    "title": "docs(convert): add a runnable example for NumericToBigInt",
+    "complexity": "low",
+    "area": "convert",
+    "description": "Add `ExampleNumericToBigInt` for `NumericToBigInt` (internal/convert/numeric.go:23), which calls it with a concrete literal input and asserts the result through an `// Output:` comment, so `go test` executes the example and it cannot silently rot.",
+    "why": "`NumericToBigInt` is exported from `internal/convert` at internal/convert/numeric.go:23 (`func NumericToBigInt(n pgtype.Numeric) (*big.Int, error)`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is deterministic, so the example can assert its exact output and will fail the build the moment the behaviour changes \u2014 which is what makes an example worth more here than another line of prose.",
+    "criteria": [
+      "`ExampleNumericToBigInt` exists in `internal/convert/example_test.go` and has an `// Output:` comment, so `go test` executes and checks it",
+      "The example passes a concrete literal input rather than calling a helper that hides what is being passed",
+      "`go test ./internal/convert/...` passes with the asserted output matching exactly",
+      "`go doc internal/convert NumericToBigInt` shows the example attached to this identifier, not to the package"
+    ],
+    "guidance": [
+      "The declaration is at internal/convert/numeric.go:23 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "There is no `_test.go` beside internal/convert/numeric.go yet, so create `internal/convert/example_test.go` in package `convert` for it.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/convert/numeric.go"
+  },
+  {
+    "title": "docs(indexer): add a runnable example for Ingestor.ConsecutiveTickFailures",
+    "complexity": "low",
+    "area": "indexer",
+    "description": "Add `ExampleIngestor_ConsecutiveTickFailures` for `Ingestor.ConsecutiveTickFailures` (internal/indexer/ingest.go:151, a method on `Ingestor`), which calls it with a concrete literal input and asserts the result through an `// Output:` comment, so `go test` executes the example and it cannot silently rot.",
+    "why": "`Ingestor.ConsecutiveTickFailures` is exported from `internal/indexer` at internal/indexer/ingest.go:151 (`func (ix *Ingestor) ConsecutiveTickFailures() uint64`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is deterministic, so the example can assert its exact output and will fail the build the moment the behaviour changes \u2014 which is what makes an example worth more here than another line of prose.",
+    "criteria": [
+      "`ExampleIngestor_ConsecutiveTickFailures` exists in `internal/indexer/ingest_test.go` and has an `// Output:` comment, so `go test` executes and checks it",
+      "The example passes a concrete literal input rather than calling a helper that hides what is being passed",
+      "`go test ./internal/indexer/...` passes with the asserted output matching exactly",
+      "`go doc internal/indexer Ingestor.ConsecutiveTickFailures` shows the example attached to this identifier, not to the package"
+    ],
+    "guidance": [
+      "The declaration is at internal/indexer/ingest.go:151 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/indexer/ingest_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "The name must be exactly `ExampleIngestor_ConsecutiveTickFailures` \u2014 Go attaches an example to a method only via the `ExampleType_Method` form. Naming it `ExampleConsecutiveTickFailures` would silently document the package instead of `Ingestor.ConsecutiveTickFailures`."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/indexer/ingest.go"
+  },
+  {
+    "title": "docs(indexer): add a runnable example for Metrics.ServeHTTP",
+    "complexity": "low",
+    "area": "indexer",
+    "description": "Add `ExampleMetrics_ServeHTTP` for `Metrics.ServeHTTP` (internal/indexer/metrics.go:22, a method on `Metrics`), which calls it with a concrete literal input and asserts the result through an `// Output:` comment, so `go test` executes the example and it cannot silently rot.",
+    "why": "`Metrics.ServeHTTP` is exported from `internal/indexer` at internal/indexer/metrics.go:22 (`func (m *Metrics) ServeHTTP(w http.ResponseWriter, r *http.Request)`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is deterministic, so the example can assert its exact output and will fail the build the moment the behaviour changes \u2014 which is what makes an example worth more here than another line of prose.",
+    "criteria": [
+      "`ExampleMetrics_ServeHTTP` exists in `internal/indexer/example_test.go` and has an `// Output:` comment, so `go test` executes and checks it",
+      "The example passes a concrete literal input rather than calling a helper that hides what is being passed",
+      "`go test ./internal/indexer/...` passes with the asserted output matching exactly",
+      "`go doc internal/indexer Metrics.ServeHTTP` shows the example attached to this identifier, not to the package"
+    ],
+    "guidance": [
+      "The declaration is at internal/indexer/metrics.go:22 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "There is no `_test.go` beside internal/indexer/metrics.go yet, so create `internal/indexer/example_test.go` in package `indexer` for it.",
+      "The name must be exactly `ExampleMetrics_ServeHTTP` \u2014 Go attaches an example to a method only via the `ExampleType_Method` form. Naming it `ExampleServeHTTP` would silently document the package instead of `Metrics.ServeHTTP`."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/indexer/metrics.go"
+  },
+  {
+    "title": "docs(meter): add a runnable example for Catalog.Price",
+    "complexity": "low",
+    "area": "meter",
+    "description": "Add `ExampleCatalog_Price` for `Catalog.Price` (internal/meter/pricing.go:144, a method on `Catalog`), which calls it with a concrete literal input and asserts the result through an `// Output:` comment, so `go test` executes the example and it cannot silently rot.",
+    "why": "`Catalog.Price` is exported from `internal/meter` at internal/meter/pricing.go:144 (`func (c *Catalog) Price(ledger uint32, method, pathTemplate string, units uint64) (*PricedRequest, error)`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is deterministic, so the example can assert its exact output and will fail the build the moment the behaviour changes \u2014 which is what makes an example worth more here than another line of prose.",
+    "criteria": [
+      "`ExampleCatalog_Price` exists in `internal/meter/pricing_test.go` and has an `// Output:` comment, so `go test` executes and checks it",
+      "The example passes a concrete literal input rather than calling a helper that hides what is being passed",
+      "`go test ./internal/meter/...` passes with the asserted output matching exactly",
+      "`go doc internal/meter Catalog.Price` shows the example attached to this identifier, not to the package"
+    ],
+    "guidance": [
+      "The declaration is at internal/meter/pricing.go:144 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/meter/pricing_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "The name must be exactly `ExampleCatalog_Price` \u2014 Go attaches an example to a method only via the `ExampleType_Method` form. Naming it `ExamplePrice` would silently document the package instead of `Catalog.Price`."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/meter/pricing.go"
+  },
+  {
+    "title": "docs(pricebook): add a runnable example for Source.TTL",
+    "complexity": "low",
+    "area": "pricebook",
+    "description": "Add `ExampleSource_TTL` for `Source.TTL` (internal/pricebook/pricebook.go:175, a method on `Source`), which calls it with a concrete literal input and asserts the result through an `// Output:` comment, so `go test` executes the example and it cannot silently rot.",
+    "why": "`Source.TTL` is exported from `internal/pricebook` at internal/pricebook/pricebook.go:175 (`func (s *Source) TTL() time.Duration`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is deterministic, so the example can assert its exact output and will fail the build the moment the behaviour changes \u2014 which is what makes an example worth more here than another line of prose.",
+    "criteria": [
+      "`ExampleSource_TTL` exists in `internal/pricebook/pricebook_test.go` and has an `// Output:` comment, so `go test` executes and checks it",
+      "The example passes a concrete literal input rather than calling a helper that hides what is being passed",
+      "`go test ./internal/pricebook/...` passes with the asserted output matching exactly",
+      "`go doc internal/pricebook Source.TTL` shows the example attached to this identifier, not to the package"
+    ],
+    "guidance": [
+      "The declaration is at internal/pricebook/pricebook.go:175 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/pricebook/pricebook_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "The name must be exactly `ExampleSource_TTL` \u2014 Go attaches an example to a method only via the `ExampleType_Method` form. Naming it `ExampleTTL` would silently document the package instead of `Source.TTL`."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/pricebook/pricebook.go"
+  },
+  {
+    "title": "docs(anchor): add a runnable example for NewDriver",
+    "complexity": "low",
+    "area": "anchor",
+    "description": "Add `ExampleNewDriver` for `NewDriver` (internal/anchor/anchor.go:102), which shows one accepted input and one rejected input, with the rejection's error identified by the sentinel it matches.",
+    "why": "`NewDriver` is exported from `internal/anchor` at internal/anchor/anchor.go:102 (`func NewDriver(cfg Config) (*Driver, error)`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is a parse or construction entry point, so the valuable half of the example is the rejection: showing which sentinel a malformed input produces documents the contract far better than the signature does.",
+    "criteria": [
+      "`ExampleNewDriver` exists in `internal/anchor/anchor_test.go` and covers one accepted and one rejected input",
+      "The rejected case identifies the sentinel via `errors.Is`, not by comparing an error string",
+      "The example has an `// Output:` comment so `go test` executes and checks it",
+      "`go test ./internal/anchor/...` passes"
+    ],
+    "guidance": [
+      "The declaration is at internal/anchor/anchor.go:102 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/anchor/anchor_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/anchor/anchor.go"
+  },
+  {
+    "title": "docs(httpserver): add a runnable example for New",
+    "complexity": "low",
+    "area": "httpserver",
+    "description": "Add `ExampleNew` for `New` (internal/httpserver/server.go:20), which shows one accepted input and one rejected input, with the rejection's error identified by the sentinel it matches.",
+    "why": "`New` is exported from `internal/httpserver` at internal/httpserver/server.go:20 (`func New(addr string, handler http.Handler, timeouts Timeouts) (*http.Server, error)`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is a parse or construction entry point, so the valuable half of the example is the rejection: showing which sentinel a malformed input produces documents the contract far better than the signature does.",
+    "criteria": [
+      "`ExampleNew` exists in `internal/httpserver/server_test.go` and covers one accepted and one rejected input",
+      "The rejected case identifies the sentinel via `errors.Is`, not by comparing an error string",
+      "The example has an `// Output:` comment so `go test` executes and checks it",
+      "`go test ./internal/httpserver/...` passes"
+    ],
+    "guidance": [
+      "The declaration is at internal/httpserver/server.go:20 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/httpserver/server_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/httpserver/server.go"
+  },
+  {
+    "title": "docs(indexer): add a runnable example for NewMetrics",
+    "complexity": "low",
+    "area": "indexer",
+    "description": "Add `ExampleNewMetrics` for `NewMetrics` (internal/indexer/metrics.go:16), which shows one accepted input and one rejected input, with the rejection's error identified by the sentinel it matches.",
+    "why": "`NewMetrics` is exported from `internal/indexer` at internal/indexer/metrics.go:16 (`func NewMetrics(ingestor *Ingestor) *Metrics`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is a parse or construction entry point, so the valuable half of the example is the rejection: showing which sentinel a malformed input produces documents the contract far better than the signature does.",
+    "criteria": [
+      "`ExampleNewMetrics` exists in `internal/indexer/example_test.go` and covers one accepted and one rejected input",
+      "The rejected case identifies the sentinel via `errors.Is`, not by comparing an error string",
+      "The example has an `// Output:` comment so `go test` executes and checks it",
+      "`go test ./internal/indexer/...` passes"
+    ],
+    "guidance": [
+      "The declaration is at internal/indexer/metrics.go:16 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "There is no `_test.go` beside internal/indexer/metrics.go yet, so create `internal/indexer/example_test.go` in package `indexer` for it.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/indexer/metrics.go"
+  },
+  {
+    "title": "docs(pricebook): add a runnable example for NewHTTPFetcher",
+    "complexity": "low",
+    "area": "pricebook",
+    "description": "Add `ExampleNewHTTPFetcher` for `NewHTTPFetcher` (internal/pricebook/fetch.go:35), which shows one accepted input and one rejected input, with the rejection's error identified by the sentinel it matches.",
+    "why": "`NewHTTPFetcher` is exported from `internal/pricebook` at internal/pricebook/fetch.go:35 (`func NewHTTPFetcher(client *http.Client) *HTTPFetcher`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is a parse or construction entry point, so the valuable half of the example is the rejection: showing which sentinel a malformed input produces documents the contract far better than the signature does.",
+    "criteria": [
+      "`ExampleNewHTTPFetcher` exists in `internal/pricebook/example_test.go` and covers one accepted and one rejected input",
+      "The rejected case identifies the sentinel via `errors.Is`, not by comparing an error string",
+      "The example has an `// Output:` comment so `go test` executes and checks it",
+      "`go test ./internal/pricebook/...` passes"
+    ],
+    "guidance": [
+      "The declaration is at internal/pricebook/fetch.go:35 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "There is no `_test.go` beside internal/pricebook/fetch.go yet, so create `internal/pricebook/example_test.go` in package `pricebook` for it.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/pricebook/fetch.go"
+  },
+  {
+    "title": "docs(pricebook): add a runnable example for NewSource",
+    "complexity": "low",
+    "area": "pricebook",
+    "description": "Add `ExampleNewSource` for `NewSource` (internal/pricebook/pricebook.go:149), which shows one accepted input and one rejected input, with the rejection's error identified by the sentinel it matches.",
+    "why": "`NewSource` is exported from `internal/pricebook` at internal/pricebook/pricebook.go:149 (`func NewSource(cfg Config) (*Source, error)`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is a parse or construction entry point, so the valuable half of the example is the rejection: showing which sentinel a malformed input produces documents the contract far better than the signature does.",
+    "criteria": [
+      "`ExampleNewSource` exists in `internal/pricebook/pricebook_test.go` and covers one accepted and one rejected input",
+      "The rejected case identifies the sentinel via `errors.Is`, not by comparing an error string",
+      "The example has an `// Output:` comment so `go test` executes and checks it",
+      "`go test ./internal/pricebook/...` passes"
+    ],
+    "guidance": [
+      "The declaration is at internal/pricebook/pricebook.go:149 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/pricebook/pricebook_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/pricebook/pricebook.go"
+  },
+  {
+    "title": "docs(anchor): add a runnable example for Config",
+    "complexity": "low",
+    "area": "anchor",
+    "description": "Add `ExampleConfig` for `Config` (internal/anchor/anchor.go:63), which constructs it and uses it the way a caller actually would, so the difference between the zero value and a properly-constructed one is visible.",
+    "why": "`Config` is exported from `internal/anchor` at internal/anchor/anchor.go:63 (`type Config struct`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is an exported type with no example, so nothing in the package documentation shows which fields a caller is expected to set versus which the package fills in. That is exactly the question an example answers and a doc comment usually does not.",
+    "criteria": [
+      "`ExampleConfig` exists in `internal/anchor/anchor_test.go` and constructs the type the way a caller would",
+      "The example sets every field a caller is required to set, and leaves the ones the package fills in alone",
+      "The example either asserts an `// Output:` comment, or carries a comment saying why output is not asserted",
+      "`go test ./internal/anchor/...` passes"
+    ],
+    "guidance": [
+      "The declaration is at internal/anchor/anchor.go:63 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/anchor/anchor_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/anchor/anchor.go"
+  },
+  {
+    "title": "docs(anchor): add a runnable example for Driver",
+    "complexity": "low",
+    "area": "anchor",
+    "description": "Add `ExampleDriver` for `Driver` (internal/anchor/anchor.go:90), which constructs it and uses it the way a caller actually would, so the difference between the zero value and a properly-constructed one is visible.",
+    "why": "`Driver` is exported from `internal/anchor` at internal/anchor/anchor.go:90 (`type Driver struct`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is an exported type with no example, so nothing in the package documentation shows which fields a caller is expected to set versus which the package fills in. That is exactly the question an example answers and a doc comment usually does not.",
+    "criteria": [
+      "`ExampleDriver` exists in `internal/anchor/anchor_test.go` and constructs the type the way a caller would",
+      "The example sets every field a caller is required to set, and leaves the ones the package fills in alone",
+      "The example either asserts an `// Output:` comment, or carries a comment saying why output is not asserted",
+      "`go test ./internal/anchor/...` passes"
+    ],
+    "guidance": [
+      "The declaration is at internal/anchor/anchor.go:90 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/anchor/anchor_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/anchor/anchor.go"
+  },
+  {
+    "title": "docs(httpapi): add a runnable example for CatalogSource",
+    "complexity": "low",
+    "area": "httpapi",
+    "description": "Add `ExampleCatalogSource` for `CatalogSource` (internal/httpapi/metering.go:53), which constructs it and uses it the way a caller actually would, so the difference between the zero value and a properly-constructed one is visible.",
+    "why": "`CatalogSource` is exported from `internal/httpapi` at internal/httpapi/metering.go:53 (`type CatalogSource interface`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is an exported type with no example, so nothing in the package documentation shows which fields a caller is expected to set versus which the package fills in. That is exactly the question an example answers and a doc comment usually does not.",
+    "criteria": [
+      "`ExampleCatalogSource` exists in `internal/httpapi/metering_test.go` and constructs the type the way a caller would",
+      "The example sets every field a caller is required to set, and leaves the ones the package fills in alone",
+      "The example either asserts an `// Output:` comment, or carries a comment saying why output is not asserted",
+      "`go test ./internal/httpapi/...` passes"
+    ],
+    "guidance": [
+      "The declaration is at internal/httpapi/metering.go:53 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/httpapi/metering_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/httpapi/metering.go"
+  },
+  {
+    "title": "docs(httpapi): add a runnable example for PeriodOpener",
+    "complexity": "low",
+    "area": "httpapi",
+    "description": "Add `ExamplePeriodOpener` for `PeriodOpener` (internal/httpapi/metering.go:67), which constructs it and uses it the way a caller actually would, so the difference between the zero value and a properly-constructed one is visible.",
+    "why": "`PeriodOpener` is exported from `internal/httpapi` at internal/httpapi/metering.go:67 (`type PeriodOpener interface`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is an exported type with no example, so nothing in the package documentation shows which fields a caller is expected to set versus which the package fills in. That is exactly the question an example answers and a doc comment usually does not.",
+    "criteria": [
+      "`ExamplePeriodOpener` exists in `internal/httpapi/metering_test.go` and constructs the type the way a caller would",
+      "The example sets every field a caller is required to set, and leaves the ones the package fills in alone",
+      "The example either asserts an `// Output:` comment, or carries a comment saying why output is not asserted",
+      "`go test ./internal/httpapi/...` passes"
+    ],
+    "guidance": [
+      "The declaration is at internal/httpapi/metering.go:67 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/httpapi/metering_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/httpapi/metering.go"
+  },
+  {
+    "title": "docs(httpserver): add a runnable example for Timeouts",
+    "complexity": "low",
+    "area": "httpserver",
+    "description": "Add `ExampleTimeouts` for `Timeouts` (internal/httpserver/server.go:12), which constructs it and uses it the way a caller actually would, so the difference between the zero value and a properly-constructed one is visible.",
+    "why": "`Timeouts` is exported from `internal/httpserver` at internal/httpserver/server.go:12 (`type Timeouts struct`) and has no example. The repository has **zero** `Example` functions across all 239 exported identifiers, so `go doc` shows signatures and prose but never one executable call. It is an exported type with no example, so nothing in the package documentation shows which fields a caller is expected to set versus which the package fills in. That is exactly the question an example answers and a doc comment usually does not.",
+    "criteria": [
+      "`ExampleTimeouts` exists in `internal/httpserver/server_test.go` and constructs the type the way a caller would",
+      "The example sets every field a caller is required to set, and leaves the ones the package fills in alone",
+      "The example either asserts an `// Output:` comment, or carries a comment saying why output is not asserted",
+      "`go test ./internal/httpserver/...` passes"
+    ],
+    "guidance": [
+      "The declaration is at internal/httpserver/server.go:12 \u2014 read its doc comment first. This repository uses doc comments to record design decisions, and the example should agree with what is there rather than restate it.",
+      "`internal/httpserver/server_test.go` already tests this file \u2014 add the example there, or in a sibling `example_test.go` in the same package. `go test` only runs `Example*` functions that live alongside the package's other tests.",
+      "An example whose `// Output:` comment does not match is a build failure. That is the point \u2014 do not delete the comment to make it pass."
+    ],
+    "good_first_issue": true,
+    "entry_point": "internal/httpserver/server.go"
   }
 ]

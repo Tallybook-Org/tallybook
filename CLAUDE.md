@@ -418,6 +418,12 @@ naming the missing variable — never start with a zero value.
 | `TB_SETTLER_TICK` | `30s` | Poll interval |
 | `TB_INDEXER_START_LEDGER` | `4590000` | Where ingestion begins |
 | `TB_COLLECTOR_ADDR` | `:8080` | Listen address |
+| `TB_COLLECTOR_PERIOD_TICK` | `1m` | Optional. How often the collector closes billing periods that have run their course |
+| `TB_COLLECTOR_ANCHOR_TICK` | `5m` | Optional. How often the collector anchors closed periods on chain |
+| `TB_ANCHOR_TOKEN` | `C...` | Optional. The SEP-41 token x402 and mpp_charge statements are denominated in; without it those periods are metered and closed but not anchored |
+| `TB_SETTLER_METRICS_ADDR` | `:9101` | Optional. Settler listen address for `/metrics`, `/healthz`, `/readyz` |
+| `TB_INDEXER_ADDR` | `:9102` | Optional. Indexer listen address for `/metrics`, `/healthz`, `/readyz` |
+| `TB_INDEXER_TICK` | `5s` | Optional. How often the indexer polls the chain for new events |
 | `TB_LOG_LEVEL` | `info` | |
 
 Secrets never appear in logs, error messages, metrics labels, or commits. Add a test that

@@ -324,6 +324,27 @@ func (a *Anchorer) markPeriodAnchored(ctx context.Context, periodID int64, seq u
 	return nil
 }
 
+// BilledAmount returns the total amount billed for a period — the sum of
+// its requests' charged amounts — which is exactly the figure
+// AnchorPeriod submits as amount_billed.
+//
+// A caller that has to supply amount_settled alongside it needs to know
+// what the billed amount is: statement_registry rejects a statement
+// whose settled amount exceeds its billed amount, and "everything
+// billed has been collected" is only a statement about an amount the
+// caller knows.
+func (a *Anchorer) BilledAmount(ctx context.Context, periodID int64) (*big.Int, error) {
+	period, err := a.fetchPeriod(ctx, periodID)
+	if err != nil {
+		return nil, err
+	}
+	usg, err := a.computeUsage(ctx, period, periodID)
+	if err != nil {
+		return nil, err
+	}
+	return usg.amountBilled, nil
+}
+
 // AnchorResult is what AnchorPeriod and ReconcileAnchoring produce for a
 // period that ends up anchored (by this call or a prior one).
 type AnchorResult struct {
@@ -333,6 +354,97 @@ type AnchorResult struct {
 	UsageRoot    [32]byte
 	RequestCount uint64
 	AmountBilled *big.Int
+}
+
+// AnchorCandidate is a closed period that has not been anchored yet, with
+// the fields a caller needs to work out what to submit for it: which
+// statement it becomes, and the two arguments AnchorPeriod deliberately
+// does not derive on its own — the token it is denominated in and how
+// much of it has already settled (see AnchorPeriod's doc comment).
+type AnchorCandidate struct {
+	PeriodID     int64
+	Operator     string
+	Consumer     string
+	Protocol     string // matches httpapi's Protocol* constants: x402 | mpp_charge | mpp_session
+	Channel      string // non-empty iff Protocol == "mpp_session"
+	PeriodStart  uint32
+	PeriodEnd    uint32
+	PriceVersion uint32
+}
+
+const findDueForAnchoringSQL = `
+SELECT id, operator, consumer, protocol, channel, price_version, period_start, period_end
+FROM periods
+WHERE status = 'closed'
+ORDER BY id`
+
+// DueForAnchoring returns every closed period that has not been anchored
+// yet, oldest first. A period becomes a candidate the moment it is
+// closed, and stops being one the moment it is anchored — the same
+// status transition AnchorPeriod itself performs.
+//
+// This is the list a caller drives anchoring from: AnchorPeriod needs a
+// period ID plus the token and settled amount, and the latter two are
+// exactly the fields it cannot work out for itself, so the caller needs
+// to see the period's protocol and channel to resolve them.
+func (a *Anchorer) DueForAnchoring(ctx context.Context) ([]AnchorCandidate, error) {
+	rows, err := a.pool.Query(ctx, findDueForAnchoringSQL)
+	if err != nil {
+		return nil, fmt.Errorf("meter: anchor: find periods due for anchoring: %w", err)
+	}
+	defer rows.Close()
+
+	var out []AnchorCandidate
+	for rows.Next() {
+		var c AnchorCandidate
+		var channel *string
+		var priceVersion, periodStart, periodEnd int32
+		if err := rows.Scan(&c.PeriodID, &c.Operator, &c.Consumer, &c.Protocol, &channel, &priceVersion, &periodStart, &periodEnd); err != nil {
+			return nil, fmt.Errorf("meter: anchor: find periods due for anchoring: scan: %w", err)
+		}
+		c.Channel = derefOrEmpty(channel)
+		c.PriceVersion = uint32(priceVersion)
+		c.PeriodStart = uint32(periodStart)
+		c.PeriodEnd = uint32(periodEnd)
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("meter: anchor: find periods due for anchoring: %w", err)
+	}
+	return out, nil
+}
+
+const findUnresolvedAttemptsSQL = `
+SELECT DISTINCT period_id FROM anchor_attempts WHERE status = 'submitting' ORDER BY period_id`
+
+// UnresolvedAttempts returns the IDs of periods with an anchor attempt
+// still marked 'submitting' — an attempt whose outcome is unknown
+// because the process died between recording the intent and recording
+// the result.
+//
+// §6's ordering rule 3 requires these to be reconciled against the chain
+// before anything else happens after a restart: an attempt that actually
+// landed must not be retried into a second statement, and one that did
+// not must not block a fresh attempt forever.
+func (a *Anchorer) UnresolvedAttempts(ctx context.Context) ([]int64, error) {
+	rows, err := a.pool.Query(ctx, findUnresolvedAttemptsSQL)
+	if err != nil {
+		return nil, fmt.Errorf("meter: anchor: find unresolved attempts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("meter: anchor: find unresolved attempts: scan: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("meter: anchor: find unresolved attempts: %w", err)
+	}
+	return out, nil
 }
 
 // AnchorPeriod builds the merkle usage root for periodID's metered

@@ -63,6 +63,8 @@ internal/
 ├── stellar/    # Soroban RPC client, XDR helpers, contract bindings
 ├── merkle/     # usage-root tree builder, matching the contract byte for byte
 ├── meter/      # price schedules, request pricing, period lifecycle, anchoring
+├── pricebook/  # live price_book reader: chain versions, schedule fetch, hash check
+├── anchor/     # drives closed periods onto the chain as statements
 ├── custody/    # commitment verification and persist-before-acknowledge storage
 ├── settle/     # exposure calculation, sweep policy, submission, retry, metrics
 ├── indexer/    # event ingestion, channel state tracking, reconciliation
@@ -150,6 +152,12 @@ naming it.
 | `TB_INDEXER_START_LEDGER` | `4590000` | Where ingestion begins |
 | `TB_INDEXER_MAX_CONSECUTIVE_FAILURES` | `3` | Consecutive failed polls before indexer readiness fails |
 | `TB_COLLECTOR_ADDR` | `:8080` | Collector listen address |
+| `TB_COLLECTOR_PERIOD_TICK` | `1m` | Optional. How often the collector closes billing periods that have run their course |
+| `TB_COLLECTOR_ANCHOR_TICK` | `5m` | Optional. How often the collector anchors closed periods on chain |
+| `TB_ANCHOR_TOKEN` | `CB2IEP...` | Optional. The SEP-41 token x402 and mpp_charge statements are denominated in. Without it those periods are metered and closed but never anchored |
+| `TB_SETTLER_METRICS_ADDR` | `:9101` | Optional. Settler listen address for `/metrics`, `/healthz`, `/readyz` |
+| `TB_INDEXER_ADDR` | `:9102` | Optional. Indexer listen address for `/metrics`, `/healthz`, `/readyz` |
+| `TB_INDEXER_TICK` | `5s` | Optional. How often the indexer polls the chain for new events |
 | `TB_LOG_LEVEL` | `info` | |
 | `TB_HTTP_READ_HEADER_TIMEOUT` | `5s` | Maximum time to read request headers; protects against slow-header clients |
 | `TB_HTTP_READ_TIMEOUT` | `2m` | Maximum time to read a complete request |
@@ -186,12 +194,45 @@ asserting it.
   `internal/settle.Daemon` re-evaluates deadline pressure fresh every
   tick and tightens its own polling interval under pressure — see
   `internal/settle/daemon.go`.
-- **`cmd/collector` mounts no protected route.** Tallybook meters "a
-  paid API" generically; there is no config naming a specific upstream to
-  reverse-proxy. The collector binary starts up, migrates the schema, and
-  exposes what an operator's own route registration needs
-  (`httpapi.Middleware` and its dependencies) — wiring an actual route
-  table is deployment-specific.
+- **`cmd/collector` serves one example route, and it is not
+  authenticated.** Tallybook meters "a paid API" generically; there is no
+  config naming a specific upstream to reverse-proxy, so the collector
+  registers a single example route, `GET /v1/example`, to have something
+  to meter. The caller's identity comes from the `X-Tallybook-Consumer`
+  request header (`X-Tallybook-Protocol` and `X-Tallybook-Channel` for the
+  protocol and its payment channel) — **that is not authentication**.
+  Anyone who can reach the collector can claim to be any consumer, and
+  the operator's usage would be billed to a consumer who never paid for
+  it. An operator serving a real API replaces the route with their own
+  handler and their own authentication, keeping
+  `httpapi.Middleware` around it — see `cmd/collector/routes.go`. The
+  route is also only priced if the operator's published schedule has a
+  rule for `GET /v1/example`; without one, every request to it fails
+  closed with a 500 rather than being served unmetered.
+- **The collector's price schedule is cached, not read per request.**
+  `internal/pricebook` reads the operator's published versions off the
+  chain, fetches each version's schedule document over HTTP, verifies it
+  against the hash the chain recorded, and caches the result. A request
+  is priced against the cached catalog, so a schedule published moments
+  ago can take up to one refresh interval (30s by default) to be picked
+  up — which costs nothing in correctness, because a price book's
+  versions are immutable and a newly published version cannot take
+  effect in the past (§4), so a version that is not yet cached is not
+  yet in effect either.
+- **An x402 or mpp_charge statement is only anchored when
+  `TB_ANCHOR_TOKEN` is set.** An `mpp_session` statement takes its token
+  from the payment channel itself. The token an x402 or mpp_charge
+  request was paid in is a property of the payment, and nothing in this
+  codebase records it — so without `TB_ANCHOR_TOKEN` those periods are
+  metered and closed but never anchored, rather than anchored in a token
+  nobody chose.
+- **`amount_settled` is an approximation for an mpp_session period.**
+  The settler sweeps a channel cumulatively, and the tables this
+  codebase keeps record channel-level totals, not per-period amounts, so
+  a session statement reports the channel's swept total capped at what
+  the period billed (`internal/anchor`). The x402 and mpp_charge case is
+  exact: those requests are paid for individually, at the moment they
+  are served.
 
 ## Documentation
 

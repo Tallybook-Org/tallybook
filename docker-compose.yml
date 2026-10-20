@@ -55,6 +55,16 @@ services:
       TB_INDEXER_START_LEDGER: ${TB_INDEXER_START_LEDGER:-4590000}
       TB_INDEXER_MAX_CONSECUTIVE_FAILURES: ${TB_INDEXER_MAX_CONSECUTIVE_FAILURES:-3}
       TB_COLLECTOR_ADDR: ":8080"
+      # Optional, with the same defaults the binaries used before these
+      # variables existed. Overriding them moves the service's listen
+      # address inside the container — the published ports below still
+      # map the defaults, so change the mapping to match.
+      TB_SETTLER_METRICS_ADDR: "${TB_SETTLER_METRICS_ADDR:-:9101}"
+      TB_INDEXER_ADDR: "${TB_INDEXER_ADDR:-:9102}"
+      TB_INDEXER_TICK: "${TB_INDEXER_TICK:-5s}"
+      TB_COLLECTOR_PERIOD_TICK: "${TB_COLLECTOR_PERIOD_TICK:-1m}"
+      TB_COLLECTOR_ANCHOR_TICK: "${TB_COLLECTOR_ANCHOR_TICK:-5m}"
+      TB_ANCHOR_TOKEN: "${TB_ANCHOR_TOKEN:-}"
       TB_LOG_LEVEL: ${TB_LOG_LEVEL:-info}
       TB_HTTP_READ_HEADER_TIMEOUT: ${TB_HTTP_READ_HEADER_TIMEOUT:-5s}
       TB_HTTP_READ_TIMEOUT: ${TB_HTTP_READ_TIMEOUT:-2m}
@@ -77,7 +87,7 @@ services:
         condition: service_healthy
     environment: *tallybook-env
     ports:
-      - "9101:9101" # /metrics, /healthz, /readyz — see cmd/settler's own fixed metricsAddr
+      - "9101:9101" # /metrics, /healthz, /readyz — see TB_SETTLER_METRICS_ADDR
 
   indexer:
     build:
@@ -88,7 +98,7 @@ services:
         condition: service_healthy
     environment: *tallybook-env
     ports:
-      - "9102:9102" # /healthz, /readyz — see cmd/indexer's own fixed healthAddr
+      - "9102:9102" # /healthz, /readyz — see TB_INDEXER_ADDR
 
 volumes:
   tallybook-postgres:

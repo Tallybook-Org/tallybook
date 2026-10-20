@@ -31,11 +31,13 @@ import (
 	"github.com/Tallybook-Org/tallybook/internal/store"
 )
 
-// metricsAddr is where the settler serves /metrics, /healthz, and
-// /readyz. §7 has no env var for it — TB_COLLECTOR_ADDR is the
-// collector's own listen address, not this binary's — so this is a
-// fixed default rather than newly-invented required configuration.
-const metricsAddr = ":9101"
+// metricsAddrDefault is the address the settler falls back to when
+// TB_SETTLER_METRICS_ADDR is unset. §7 named no env var for it —
+// TB_COLLECTOR_ADDR is the collector's own listen address, not this
+// binary's — so this binary shipped with a fixed value, which the
+// variable now makes adjustable without changing what an existing
+// deployment does.
+const metricsAddrDefault = config.DefaultSettlerMetricsAddr
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -113,7 +115,7 @@ func run(ctx context.Context) error {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	srv, err := httpserver.New(metricsAddr, mux, httpserver.Timeouts{
+	srv, err := httpserver.New(cfg.SettlerMetricsAddr, mux, httpserver.Timeouts{
 		ReadHeader: cfg.HTTPReadHeaderTimeout,
 		Read:       cfg.HTTPReadTimeout,
 		Write:      cfg.HTTPWriteTimeout,
@@ -134,7 +136,7 @@ func run(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("settler: metrics listening", "addr", metricsAddr)
+		slog.Info("settler: metrics listening", "addr", cfg.SettlerMetricsAddr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("http server: %w", err)
 		}

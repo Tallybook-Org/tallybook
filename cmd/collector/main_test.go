@@ -12,7 +12,9 @@ import (
 // setSmokeTestEnv sets a complete, valid environment for run() using
 // t.Setenv (automatically restored when the test ends), pointed at the
 // same local docker-compose Postgres every other package's own
-// integration tests use.
+// integration tests use. TB_OPERATOR_SECRET must be a real, parseable
+// ed25519 seed here (unlike a plain config-validation test) — the
+// collector signs the anchor transactions it submits with it.
 func setSmokeTestEnv(t *testing.T, addr string) {
 	t.Helper()
 	env := map[string]string{
@@ -23,15 +25,18 @@ func setSmokeTestEnv(t *testing.T, addr string) {
 		"TB_STATEMENT_REGISTRY_ID":  "C" + strings.Repeat("D", 55),
 		"TB_OPERATOR_ADDRESS":       "G" + strings.Repeat("A", 55),
 		"TB_OPERATOR_SECRET_SOURCE": "env",
-		"TB_OPERATOR_SECRET":        "S" + strings.Repeat("E", 55),
-		"TB_SAFETY_MARGIN_LEDGERS":  "1440",
-		"TB_MAX_EXPOSURE":           "10000000",
-		"TB_MAX_EXPOSURE_AGE":       "24h",
-		"TB_PERIOD_DURATION":        "720h",
-		"TB_SETTLER_TICK":           "30s",
-		"TB_INDEXER_START_LEDGER":   "4590000",
-		"TB_COLLECTOR_ADDR":         addr,
-		"TB_LOG_LEVEL":              "info",
+		// A real, syntactically valid (but unfunded, disposable) testnet
+		// seed — the same one cmd/settler's own smoke test uses — not a
+		// real secret.
+		"TB_OPERATOR_SECRET":       "SAQJHZ3ZUNSHQB2CWYRGD5JKTJW6YDSCGIFOKHAPESG3DCURKQ4ZTZYM",
+		"TB_SAFETY_MARGIN_LEDGERS": "1440",
+		"TB_MAX_EXPOSURE":          "10000000",
+		"TB_MAX_EXPOSURE_AGE":      "24h",
+		"TB_PERIOD_DURATION":       "720h",
+		"TB_SETTLER_TICK":          "30s",
+		"TB_INDEXER_START_LEDGER":  "4590000",
+		"TB_COLLECTOR_ADDR":        addr,
+		"TB_LOG_LEVEL":             "info",
 	}
 	for k, v := range env {
 		t.Setenv(k, v)

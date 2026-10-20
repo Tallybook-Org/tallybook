@@ -31,6 +31,8 @@ func setSmokeTestEnv(t *testing.T) {
 		"TB_SETTLER_TICK":           "30s",
 		"TB_INDEXER_START_LEDGER":   "4590000",
 		"TB_COLLECTOR_ADDR":         ":8080",
+		"TB_INDEXER_ADDR":           healthAddrDefault,
+		"TB_INDEXER_TICK":           "1m",
 		"TB_LOG_LEVEL":              "info",
 	}
 	for k, v := range env {
@@ -50,10 +52,10 @@ func pingPostgresOrSkip(t *testing.T) {
 // TestRun_StartsAndStaysUpUntilCancelled is the smoke test: run() against
 // real local Postgres must not exit on its own — the ingestion loop and
 // the health server both come up, /healthz answers, and everything shuts
-// down cleanly once the context is cancelled. The ingestion loop's first
-// real getEvents call happens only once tickInterval elapses, well after
-// this test has already confirmed liveness and moved to cancellation, so
-// no live network round trip is required for the test to pass.
+// down cleanly once the context is cancelled. TB_INDEXER_TICK is set well
+// beyond the length of this test, so the ingestion loop's first real
+// getEvents call never happens during it and no live network round trip
+// is required for the test to pass.
 func TestRun_StartsAndStaysUpUntilCancelled(t *testing.T) {
 	pingPostgresOrSkip(t)
 	setSmokeTestEnv(t)
@@ -65,7 +67,7 @@ func TestRun_StartsAndStaysUpUntilCancelled(t *testing.T) {
 	var lastErr error
 	up := false
 	for i := 0; i < 50; i++ {
-		resp, err := http.Get("http://localhost" + healthAddr + "/healthz")
+		resp, err := http.Get("http://localhost" + healthAddrDefault + "/healthz")
 		if err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

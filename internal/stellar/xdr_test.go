@@ -119,6 +119,41 @@ func ExampleDecodeVec() {
 	// 42 hello
 }
 
+// ExampleDecodeMap decodes the map shape every contract binding in this
+// package relies on — Symbol keys, one entry per struct field — and shows
+// the one thing DecodeMap refuses to do: accept an entry whose key is not
+// a Symbol. That entry is an error, not a silently dropped field, so a
+// struct field that never arrives on chain fails loudly here instead of
+// decoding as a zero value.
+func ExampleDecodeMap() {
+	decoded, err := DecodeMap(ScvMap([]xdr.ScMapEntry{
+		MapEntry("amount", ScvU64(1250)),
+		MapEntry("price_v", ScvU32(7)),
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	amount, err := DecodeU64(decoded["amount"])
+	if err != nil {
+		log.Fatal(err)
+	}
+	priceVersion, err := DecodeU32(decoded["price_v"])
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("amount=%d price_v=%d\n", amount, priceVersion)
+
+	// A key that isn't a Symbol is rejected, not dropped.
+	_, err = DecodeMap(ScvMap([]xdr.ScMapEntry{
+		{Key: ScvString("amount"), Val: ScvU64(1250)},
+	}))
+	fmt.Println("non-symbol key rejected:", err != nil)
+
+	// Output:
+	// amount=1250 price_v=7
+	// non-symbol key rejected: true
+}
+
 func TestScvU32_RoundTrip(t *testing.T) {
 	for _, v := range []uint32{0, 1, 42, 1 << 31, 1<<32 - 1} {
 		got, err := DecodeU32(ScvU32(v))
