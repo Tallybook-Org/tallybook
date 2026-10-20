@@ -15,6 +15,16 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+func ExampleDecodeU64() {
+	v, err := DecodeU64(ScvU64(42))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// 42
+}
+
 func ExampleScvI32() {
 	v, err := DecodeI32(ScvI32(-42))
 	if err != nil {
@@ -68,6 +78,25 @@ func ExampleErrWrongScValType_Error() {
 	fmt.Println(err.Error())
 	// Output:
 	// stellar: expected ScVal type ScValTypeScvU32, got ScValTypeScvString
+}
+
+func ExampleDecodeVec() {
+	vecVal := ScvVec([]xdr.ScVal{ScvU32(42), ScvSymbol("hello")})
+	items, err := DecodeVec(vecVal)
+	if err != nil {
+		panic(err)
+	}
+	uVal, err := DecodeU32(items[0])
+	if err != nil {
+		panic(err)
+	}
+	sVal, err := DecodeSymbol(items[1])
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(uVal, sVal)
+	// Output:
+	// 42 hello
 }
 
 func TestScvU32_RoundTrip(t *testing.T) {
@@ -546,6 +575,20 @@ func ExampleMapField() {
 	}
 	fmt.Println(amount)
 	// Output: 1250
+}
+
+func ExampleMapEntry() {
+	entry := MapEntry("amount", ScvU64(1250))
+	key, err := DecodeSymbol(entry.Key)
+	if err != nil {
+		log.Fatal(err)
+	}
+	amount, err := DecodeU64(entry.Val)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s: %d\n", key, amount)
+	// Output: amount: 1250
 }
 
 func ExampleMarshalScValBase64() {

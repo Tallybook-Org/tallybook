@@ -5,14 +5,103 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"github.com/Tallybook-Org/tallybook/internal/merkle"
+	"github.com/Tallybook-Org/tallybook/internal/meter"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	"github.com/Tallybook-Org/tallybook/internal/merkle"
-	"github.com/Tallybook-Org/tallybook/internal/meter"
 )
+
+// ExampleRecorder shows how a caller actually obtains and uses a Recorder.
+// Recorder is an interface (metering.go), so "constructing" one means
+// implementing RecordRequest — internal/store's request-persistence type
+// does this in production — and handing it to Config.Recorder; a config
+// left holding the zero value (nil) is rejected at wiring time instead of
+// silently recording nothing, which is the difference visible below.
+//
+// The caller sets only the fields it owns: the Config wiring (Operator,
+// Method, PathTemplate, Pricer, Ledger, Recorder) and the request's
+// RequestInfo. UnitCount is left unset so the package's default (one unit
+// per request) fills it in, and every field of the RecordedRequest —
+// request ID, endpoint hash, price version, charged amount, observed
+// ledger — is filled in by the middleware, never by the caller.
+func ExampleRecorder() {
+	// The wiring a caller is required to set, per Config.validate —
+	// everything except the Recorder, which comes last so the zero-value
+	// case below stays visible.
+	sched, err := meter.ParseSchedule([]byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"1000"}]}`))
+	if err != nil {
+		fmt.Println("parse schedule:", err)
+		return
+	}
+	catalog, err := meter.NewCatalog(meter.CatalogVersion{Version: 1, EffectiveLedger: 1000, Schedule: sched})
+	if err != nil {
+		fmt.Println("new catalog:", err)
+		return
+	}
+	cfg := Config{
+		Operator:     "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
+		Method:       "GET",
+		PathTemplate: "/v1/items",
+		Pricer:       meter.NewPricer(catalog),
+		Ledger:       fakeLedgerSource{ledger: 1500},
+	}
+
+	// The zero value: no implementation to record with, so wiring fails
+	// fast and names the problem rather than serving requests unmetered.
+	if _, err := Middleware(cfg); err != nil {
+		fmt.Println("zero value rejected:", err)
+	}
+
+	// A properly-constructed one: an implementation handed to Config.
+	// RecordRequest is the only method to satisfy; the in-memory fake
+	// stands in for internal/store's type, which needs a database.
+	rec := &fakeRecorder{}
+	cfg.Recorder = rec
+
+	mw, err := Middleware(cfg)
+	if err != nil {
+		fmt.Println("middleware:", err)
+		return
+	}
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	req := httptest.NewRequest("GET", "/v1/items", nil)
+	info := RequestInfo{
+		Consumer: "GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY",
+		Protocol: ProtocolX402,
+	}
+	req = req.WithContext(WithRequestInfo(req.Context(), info))
+	mw(next).ServeHTTP(httptest.NewRecorder(), req)
+
+	// Everything below was filled in by the package, not the caller.
+	got := rec.recorded[0]
+	fmt.Println("recorded:", len(rec.recorded))
+	fmt.Println("operator:", got.Operator)
+	fmt.Println("consumer:", got.Consumer)
+	fmt.Println("endpoint:", got.Method, got.PathTemplate)
+	fmt.Printf("endpoint hash: %x\n", got.EndpointHash)
+	fmt.Println("units:", got.UnitCount, "(package default)")
+	fmt.Println("price version:", got.PriceVersion)
+	fmt.Println("charged amount:", got.ChargedAmount)
+	fmt.Println("protocol:", got.Protocol)
+	fmt.Println("observed ledger:", got.ObservedLedger)
+	fmt.Println("request id set:", got.RequestID != [32]byte{})
+
+	// Output:
+	// zero value rejected: httpapi: metering config: recorder is nil
+	// recorded: 1
+	// operator: GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM
+	// consumer: GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY
+	// endpoint: GET /v1/items
+	// endpoint hash: 79a8cbca8c21b745b034907bd0d84cad5dc580f9370b446c9f4030d4e4affb03
+	// units: 1 (package default)
+	// price version: 1
+	// charged amount: 1000
+	// protocol: x402
+	// observed ledger: 1500
+	// request id set: true
+}
 
 type fakeLedgerSource struct {
 	ledger uint32
@@ -189,6 +278,7 @@ func TestConfig_Validate(t *testing.T) {
 // duplicated per failure kind.
 
 var errLedgerUnavailable = errors.New("rpc: ledger unavailable")
+
 var errRecordFailed = errors.New("store: connection refused")
 
 func TestMiddleware_FailureSourcesAllFailClosed(t *testing.T) {
@@ -430,96 +520,6 @@ func ExampleRequestInfo_Validate() {
 	// rejected: true
 }
 
-// ExampleRecorder shows how a caller actually obtains and uses a Recorder.
-// Recorder is an interface (metering.go), so "constructing" one means
-// implementing RecordRequest — internal/store's request-persistence type
-// does this in production — and handing it to Config.Recorder; a config
-// left holding the zero value (nil) is rejected at wiring time instead of
-// silently recording nothing, which is the difference visible below.
-//
-// The caller sets only the fields it owns: the Config wiring (Operator,
-// Method, PathTemplate, Pricer, Ledger, Recorder) and the request's
-// RequestInfo. UnitCount is left unset so the package's default (one unit
-// per request) fills it in, and every field of the RecordedRequest —
-// request ID, endpoint hash, price version, charged amount, observed
-// ledger — is filled in by the middleware, never by the caller.
-func ExampleRecorder() {
-	// The wiring a caller is required to set, per Config.validate —
-	// everything except the Recorder, which comes last so the zero-value
-	// case below stays visible.
-	sched, err := meter.ParseSchedule([]byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"1000"}]}`))
-	if err != nil {
-		fmt.Println("parse schedule:", err)
-		return
-	}
-	catalog, err := meter.NewCatalog(meter.CatalogVersion{Version: 1, EffectiveLedger: 1000, Schedule: sched})
-	if err != nil {
-		fmt.Println("new catalog:", err)
-		return
-	}
-	cfg := Config{
-		Operator:     "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
-		Method:       "GET",
-		PathTemplate: "/v1/items",
-		Pricer:       meter.NewPricer(catalog),
-		Ledger:       fakeLedgerSource{ledger: 1500},
-	}
-
-	// The zero value: no implementation to record with, so wiring fails
-	// fast and names the problem rather than serving requests unmetered.
-	if _, err := Middleware(cfg); err != nil {
-		fmt.Println("zero value rejected:", err)
-	}
-
-	// A properly-constructed one: an implementation handed to Config.
-	// RecordRequest is the only method to satisfy; the in-memory fake
-	// stands in for internal/store's type, which needs a database.
-	rec := &fakeRecorder{}
-	cfg.Recorder = rec
-
-	mw, err := Middleware(cfg)
-	if err != nil {
-		fmt.Println("middleware:", err)
-		return
-	}
-	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
-	req := httptest.NewRequest("GET", "/v1/items", nil)
-	info := RequestInfo{
-		Consumer: "GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY",
-		Protocol: ProtocolX402,
-	}
-	req = req.WithContext(WithRequestInfo(req.Context(), info))
-	mw(next).ServeHTTP(httptest.NewRecorder(), req)
-
-	// Everything below was filled in by the package, not the caller.
-	got := rec.recorded[0]
-	fmt.Println("recorded:", len(rec.recorded))
-	fmt.Println("operator:", got.Operator)
-	fmt.Println("consumer:", got.Consumer)
-	fmt.Println("endpoint:", got.Method, got.PathTemplate)
-	fmt.Printf("endpoint hash: %x\n", got.EndpointHash)
-	fmt.Println("units:", got.UnitCount, "(package default)")
-	fmt.Println("price version:", got.PriceVersion)
-	fmt.Println("charged amount:", got.ChargedAmount)
-	fmt.Println("protocol:", got.Protocol)
-	fmt.Println("observed ledger:", got.ObservedLedger)
-	fmt.Println("request id set:", got.RequestID != [32]byte{})
-
-	// Output:
-	// zero value rejected: httpapi: metering config: recorder is nil
-	// recorded: 1
-	// operator: GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM
-	// consumer: GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY
-	// endpoint: GET /v1/items
-	// endpoint hash: 79a8cbca8c21b745b034907bd0d84cad5dc580f9370b446c9f4030d4e4affb03
-	// units: 1 (package default)
-	// price version: 1
-	// charged amount: 1000
-	// protocol: x402
-	// observed ledger: 1500
-	// request id set: true
-}
-
 // BenchmarkMiddleware measures the per-request cost of metering one request
 // end to end: RequestInfo validation, the ledger read, pricing against the
 // catalog, request-ID generation, endpoint hashing, and recording. Both
@@ -598,4 +598,69 @@ func BenchmarkEndpointHashAndRequestID(b *testing.B) {
 			}
 		}
 	})
+}
+
+// ExampleMiddleware shows how a caller configures and runs Middleware to
+// meter a paid endpoint, record the request, and invoke the wrapped handler.
+func ExampleMiddleware() {
+	// A deterministic fake ledger source returning ledger 1500.
+	ledger := fakeLedgerSource{ledger: 1500}
+	// A fake recorder that prints the recorded request details.
+	recorder := &printRecorder{}
+
+	sched, err := meter.ParseSchedule([]byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"1000"}]}`))
+	if err != nil {
+		fmt.Println("ParseSchedule error:", err)
+		return
+	}
+	catalog, err := meter.NewCatalog(meter.CatalogVersion{Version: 1, EffectiveLedger: 1000, Schedule: sched})
+	if err != nil {
+		fmt.Println("NewCatalog error:", err)
+		return
+	}
+
+	cfg := Config{
+		Operator:     "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
+		Method:       "GET",
+		PathTemplate: "/v1/items",
+		Pricer:       meter.NewPricer(catalog),
+		Ledger:       ledger,
+		Recorder:     recorder,
+	}
+
+	mw, err := Middleware(cfg)
+	if err != nil {
+		fmt.Println("Middleware error:", err)
+		return
+	}
+
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	req := httptest.NewRequest("GET", "/v1/items", nil)
+	info := RequestInfo{
+		Consumer: "GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY",
+		Protocol: ProtocolX402,
+	}
+	req = req.WithContext(WithRequestInfo(req.Context(), info))
+	rec := httptest.NewRecorder()
+
+	mw(next).ServeHTTP(rec, req)
+
+	fmt.Printf("response status: %d, body: %s\n", rec.Code, rec.Body.String())
+
+	// Output:
+	// recorded: GET /v1/items consumer GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY protocol x402
+	// 1 unit(s) charged 1000 stroops price v1 observed ledger 1500
+	// response status: 200, body: ok
+}
+
+type printRecorder struct{}
+
+func (printRecorder) RecordRequest(_ context.Context, req RecordedRequest) error {
+	fmt.Printf("recorded: %s %s consumer %s protocol %s\n", req.Method, req.PathTemplate, req.Consumer, req.Protocol)
+	fmt.Printf("%d unit(s) charged %s stroops price v%d observed ledger %d\n", req.UnitCount, req.ChargedAmount, req.PriceVersion, req.ObservedLedger)
+	return nil
 }

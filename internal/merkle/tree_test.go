@@ -243,6 +243,18 @@ func TestBuildTree_SingleLeafHasEmptyProofAndRootEqualsLeaf(t *testing.T) {
 // TestBuildTree_OddCountsAtEveryDepth exercises the odd-leaf-promotion
 // path at several tree depths (3, 5, 9, 13 leaves), not just the fixture's
 // seven-leaf case, and checks every proof folds back to the root.
+func ExampleFold() {
+	leaf := [32]byte{1, 2, 3, 4}
+	proof := Proof{
+		[32]byte{5, 6, 7, 8},
+		[32]byte{9, 10, 11, 12},
+	}
+	root := Fold(leaf, proof)
+	fmt.Printf("%x\n", root)
+	// Output:
+	// 55c67a99fbb692b189589b60eefdfa2de4059653220cfe35a4f54b8e27abdf4d
+}
+
 func TestBuildTree_OddCountsAtEveryDepth(t *testing.T) {
 	for _, n := range []int{2, 3, 5, 6, 9, 13} {
 		t.Run(strconv.Itoa(n), func(t *testing.T) {
@@ -332,4 +344,54 @@ func ExampleTree() {
 	// zero-value root is unset: true
 	// zero-value proofs are unset: true
 	// zero value verifies a leaf: false
+}
+
+func benchmarkLeaves(count int) [][32]byte {
+	leaves := make([][32]byte, count)
+	for i := range leaves {
+		leaves[i] = sha256.Sum256([]byte(strconv.Itoa(i)))
+	}
+	return leaves
+}
+
+func BenchmarkBuildTree(b *testing.B) {
+	for _, count := range []int{100, 1000, 10000, 100000} {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
+			leaves := benchmarkLeaves(count)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tree, err := BuildTree(leaves)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if len(tree.Proofs) != count {
+					b.Fatalf("got %d proofs, want %d", len(tree.Proofs), count)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkBuildTreeProofsForEveryLeaf(b *testing.B) {
+	const count = 10000
+	leaves := benchmarkLeaves(count)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tree, err := BuildTree(leaves)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(tree.Proofs) != count {
+			b.Fatalf("got %d proofs, want %d", len(tree.Proofs), count)
+		}
+		proofNodes := 0
+		for _, proof := range tree.Proofs {
+			proofNodes += len(proof)
+		}
+		if proofNodes == 0 {
+			b.Fatal("no proof nodes were generated")
+		}
+	}
 }

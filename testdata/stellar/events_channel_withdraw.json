@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "events": [
+      {
+        "type": "contract",
+        "ledger": 4618548,
+        "contractId": "CADINKLIUO3FNKFNP3DJW43BSBGXDWCCISQVR5GBWJ6YBTHB5TBB6FLU",
+        "id": "0019836512615055360-0000000001",
+        "txHash": "fa26d135064ed7f3ab411848311aac1904e3041337ed4a0762affde995431bec",
+        "topic": ["AAAADwAAAAh3aXRoZHJhdw=="],
+        "value": "AAAAEAAAAAEAAAADAAAADQAAACAnwpgQ6jgupMBExx678SLX9Ncqh0uCoB05T/v5HdRMWQAAABIAAAAAAAAAAIYovMDaAbcN54uhO6jvFCAFIYzmd+etY3kscpOeqZRNAAAACgAAAAAAAAAAAAAAAAjw0YA="
+      }
+    ]
+  }
+}

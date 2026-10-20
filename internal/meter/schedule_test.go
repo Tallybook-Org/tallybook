@@ -205,6 +205,30 @@ func FuzzParseSchedule(f *testing.F) {
 	})
 }
 
+// ExampleSchedule_Lookup demonstrates how to parse a price schedule and query an
+// endpoint's unit price using Schedule.Lookup. Method comparison is
+// case-insensitive, while pathTemplate is matched exactly.
+func ExampleSchedule_Lookup() {
+	sched, err := ParseSchedule([]byte(`{"rules": [
+		{"method": "GET", "path_template": "/v1/items/{id}", "unit_price": "1000"},
+		{"method": "POST", "path_template": "/v1/items", "unit_price": "5000"}
+	]}`))
+	if err != nil {
+		panic(err)
+	}
+
+	price, ok := sched.Lookup("get", "/v1/items/{id}")
+	fmt.Println("found:", ok)
+	fmt.Println("price:", price)
+
+	_, ok = sched.Lookup("GET", "/v1/unknown")
+	fmt.Println("missing found:", ok)
+
+	// Output:
+	// found: true
+	// price: 1000
+	// missing found: false
+}
 func TestScheduleHash_DeterministicAndSensitiveToContent(t *testing.T) {
 	a := []byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"1"}]}`)
 	b := []byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"2"}]}`)
@@ -219,6 +243,26 @@ func TestScheduleHash_DeterministicAndSensitiveToContent(t *testing.T) {
 	if h1 == h3 {
 		t.Error("ScheduleHash did not change when the document content changed")
 	}
+}
+
+func ExampleSchedule_Rules() {
+	raw := []byte(`{"rules": [
+		{"method": "GET", "path_template": "/v1/items", "unit_price": "1000"},
+		{"method": "POST", "path_template": "/v1/items", "unit_price": "5000"}
+	]}`)
+
+	sched, err := ParseSchedule(raw)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, rule := range sched.Rules() {
+		fmt.Printf("%s %s: %s stroops\n", rule.Method, rule.PathTemplate, rule.UnitPrice)
+	}
+
+	// Output:
+	// GET /v1/items: 1000 stroops
+	// POST /v1/items: 5000 stroops
 }
 
 func TestSchedule_RulesReturnsDefensiveCopy(t *testing.T) {

@@ -198,6 +198,34 @@ func TestLeaf_RejectsNilAmount(t *testing.T) {
 	}
 }
 
+func ExampleLeaf() {
+	leaf, err := Leaf(Record{
+		Amount:   big.NewInt(123456789),
+		Consumer: testConsumer,
+		EndpointHash: [32]byte{
+			0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+			0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+			0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+			0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+		},
+		Ledger:       1000,
+		PriceVersion: 3,
+		RequestID: [32]byte{
+			0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+			0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+			0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+			0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
+		},
+		Units: 7,
+	})
+	if err != nil {
+		log.Fatalf("Leaf: %v", err)
+	}
+	fmt.Println(hex.EncodeToString(leaf[:]))
+	// Output:
+	// c83304f97dd71c23a1df9a26240ca0c9b57eb55ca6ee0685c5f323533facd31e
+}
+
 func TestLeaf_RejectsInvalidConsumerAddress(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -244,6 +272,16 @@ func TestEndpointHash_DistinguishesMethodAndPath(t *testing.T) {
 	if a == b {
 		t.Error("EndpointHash collided across a method/path boundary shift")
 	}
+}
+
+// ExampleEndpointHash demonstrates how to compute the endpoint hash for a
+// given HTTP method and path template.
+func ExampleEndpointHash() {
+	hash := EndpointHash("GET", "/v1/widgets/{id}")
+	fmt.Printf("%x\n", hash)
+
+	// Output:
+	// f7968b93731d5e337052ea0d1b0c0863f568393cbfb5ab807a87f505922e3b01
 }
 
 // ExampleRecord shows how a caller constructs a Record and what the zero
