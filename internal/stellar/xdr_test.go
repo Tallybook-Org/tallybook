@@ -15,6 +15,16 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+func ExampleDecodeU64() {
+	v, err := DecodeU64(ScvU64(42))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// 42
+}
+
 func ExampleScvI32() {
 	v, err := DecodeI32(ScvI32(-42))
 	if err != nil {
