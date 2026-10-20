@@ -1,7 +1,10 @@
 package stellar
 
 import (
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"log"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -62,6 +65,15 @@ func TestMatchesTopic(t *testing.T) {
 	if ok {
 		t.Error("MatchesTopic = true for a topic list of the wrong length")
 	}
+}
+
+func ExampleMatchesTopic() {
+	matched, err := MatchesTopic([]string{"AAAADwAAAAh3aXRoZHJhdw=="}, TopicWithdraw)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(matched)
+	// Output: true
 }
 
 // TestDecodePriceBookPublishEvent_AgainstRealEvents decodes two genuine
@@ -198,13 +210,12 @@ func mustMatchTopic(t *testing.T, topic []string, want ...string) bool {
 	return ok
 }
 
-// The one-way-channel event tests below are round-trip only, not checked
-// against a live capture: channel.go's doc comment explains why one
-// couldn't be obtained. Each still confirms the field order and types
-// this package encodes/decodes match the contract's real struct
-// declarations (event.rs) — the topic default (the struct name in
-// snake_case) is exercised too, though its correctness rests on
-// soroban_sdk's documented default behaviour rather than an observed one.
+// The Open, Close, and Refund tests below are round-trip only; they confirm
+// the field order and types declared in the contract source. Withdraw is
+// additionally checked against a live capture in TestDecodeChannelWithdrawEvent_LiveEvent.
+// The topic default (the struct name in snake_case) is exercised too; it
+// is directly observed for Withdraw and follows the documented SDK default
+// for the other events.
 
 func TestDecodeChannelOpenEvent_RoundTrip(t *testing.T) {
 	from := "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX"
@@ -300,6 +311,36 @@ func TestDecodeChannelWithdrawEvent_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestDecodeChannelWithdrawEvent_LiveEvent(t *testing.T) {
+	events := loadEventFixture(t, "events_channel_withdraw")
+	if len(events) != 1 {
+		t.Fatalf("fixture has %d events, want 1", len(events))
+	}
+	if !mustMatchTopic(t, events[0].Topic, TopicWithdraw) {
+		t.Fatalf("event topics %v do not match Withdraw", events[0].Topic)
+	}
+
+	ev, err := DecodeChannelWithdrawEvent(events[0].Value)
+	if err != nil {
+		t.Fatalf("DecodeChannelWithdrawEvent returned unexpected error: %v", err)
+	}
+	wantPrefixBytes, err := hex.DecodeString("27c29810ea382ea4c044c71ebbf122d7f4d72a874b82a01d394ffbf91dd44c59")
+	if err != nil {
+		t.Fatalf("decode expected prefix: %v", err)
+	}
+	var wantPrefix [32]byte
+	copy(wantPrefix[:], wantPrefixBytes)
+	if ev.OpaquePrefix == nil || *ev.OpaquePrefix != wantPrefix {
+		t.Errorf("OpaquePrefix = %v, want %x", ev.OpaquePrefix, wantPrefix)
+	}
+	if ev.To == "" {
+		t.Error("To is empty")
+	}
+	if ev.Amount.Cmp(big.NewInt(150000000)) != 0 {
+		t.Errorf("Amount = %s, want 150000000", ev.Amount)
+	}
+}
+
 func TestDecodeChannelRefundEvent_RoundTrip(t *testing.T) {
 	from := "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX"
 	fromVal, err := ScvAddress(from)
@@ -340,7 +381,7 @@ func TestDecodeEventFields_RejectsWrongLength(t *testing.T) {
 func FuzzDecodeEvents(f *testing.F) {
 	f.Add("")
 	f.Add("not-base64!")
-	for _, fixture := range []string{"events_pricebook_publish", "events_statement_registry"} {
+	for _, fixture := range []string{"events_pricebook_publish", "events_statement_registry", "events_channel_withdraw"} {
 		for _, event := range loadEventFixture(f, fixture) {
 			f.Add(event.Value)
 		}
@@ -354,13 +395,17 @@ func FuzzDecodeEvents(f *testing.F) {
 	if err != nil {
 		f.Fatalf("ScvI128: %v", err)
 	}
-	threeFieldWithdraw, err := MarshalScValBase64(ScvVec([]xdr.ScVal{address, amount, ScvU32(3)}))
+	threeFieldWithdraw, err := MarshalScValBase64(ScvVec([]xdr.ScVal{ScvBytes(make([]byte, 32)), address, amount}))
 	if err != nil {
 		f.Fatalf("MarshalScValBase64: %v", err)
 	}
 	f.Add(threeFieldWithdraw)
-	if _, err := DecodeChannelWithdrawEvent(threeFieldWithdraw); err == nil || !strings.Contains(err.Error(), "has 3 fields") {
-		f.Fatalf("three-field Withdraw payload error = %v, want a field-count rejection", err)
+	fourFieldWithdraw, err := MarshalScValBase64(ScvVec([]xdr.ScVal{ScvBytes(make([]byte, 32)), address, amount, ScvU32(3)}))
+	if err != nil {
+		f.Fatalf("MarshalScValBase64: %v", err)
+	}
+	if _, err := DecodeChannelWithdrawEvent(fourFieldWithdraw); err == nil || !strings.Contains(err.Error(), "want 2 or 3") {
+		f.Fatalf("four-field Withdraw payload error = %v, want a field-count rejection", err)
 	}
 
 	decoders := []struct {

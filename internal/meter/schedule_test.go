@@ -245,6 +245,26 @@ func TestScheduleHash_DeterministicAndSensitiveToContent(t *testing.T) {
 	}
 }
 
+func ExampleSchedule_Rules() {
+	raw := []byte(`{"rules": [
+		{"method": "GET", "path_template": "/v1/items", "unit_price": "1000"},
+		{"method": "POST", "path_template": "/v1/items", "unit_price": "5000"}
+	]}`)
+
+	sched, err := ParseSchedule(raw)
+	if err != nil {
+		panic(err)
+	}
+
+	for _, rule := range sched.Rules() {
+		fmt.Printf("%s %s: %s stroops\n", rule.Method, rule.PathTemplate, rule.UnitPrice)
+	}
+
+	// Output:
+	// GET /v1/items: 1000 stroops
+	// POST /v1/items: 5000 stroops
+}
+
 func TestSchedule_RulesReturnsDefensiveCopy(t *testing.T) {
 	sched, err := ParseSchedule([]byte(`{"rules": [{"method": "GET", "path_template": "/v1/items", "unit_price": "1"}]}`))
 	if err != nil {

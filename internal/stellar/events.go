@@ -9,16 +9,12 @@ import (
 
 // Event topic names. price_book and statement_registry's topics are
 // documented in §4 verbatim and confirmed against real emitted events
-// (events_test.go). one-way-channel's four events (Open, Close, Withdraw,
-// Refund) are not documented in §4 beyond function names, and this
-// package could not observe one live — see channel.go's doc comment for
-// why. Their topic is soroban_sdk's documented default for a
-// #[contractevent] struct with no explicit topics attribute: a single
-// Symbol matching the struct's name in snake_case, which is what
-// one-way-channel's event.rs declares (plain #[contractevent], no
-// topics=[...] override) — extrapolated from that default and from the
-// same macro's confirmed data-encoding behavior on statement_registry's
-// events, not independently observed on chain.
+// (events_test.go). one-way-channel's events are not documented in §4
+// beyond function names. The Withdraw topic and payload are confirmed by
+// a live event fixture; Open, Close, and Refund remain unobserved. Their
+// topic follows soroban_sdk's documented default for a #[contractevent]
+// struct with no explicit topics attribute: a single Symbol matching the
+// struct's name in snake_case, as declared in event.rs.
 //
 // CLAUDE.md's build step names "all five contract events", but the real
 // contract set is eight: price_book.publish (1) + statement_registry's
@@ -70,6 +66,17 @@ func MatchesTopic(topicB64 []string, want ...string) (bool, error) {
 // struct's fields, confirmed live against real anchor/dispute/resolve
 // events (events_test.go) — and checks it has exactly want elements.
 func decodeEventFields(valueB64 string, want int) ([]xdr.ScVal, error) {
+	items, err := decodeEventVector(valueB64)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) != want {
+		return nil, fmt.Errorf("event has %d fields, want %d", len(items), want)
+	}
+	return items, nil
+}
+
+func decodeEventVector(valueB64 string) ([]xdr.ScVal, error) {
 	v, err := UnmarshalScValBase64(valueB64)
 	if err != nil {
 		return nil, fmt.Errorf("event value: expected base64-encoded XDR ScVal Vec: %w", err)
@@ -77,9 +84,6 @@ func decodeEventFields(valueB64 string, want int) ([]xdr.ScVal, error) {
 	items, err := DecodeVec(v)
 	if err != nil {
 		return nil, fmt.Errorf("decode event value as vec: %w", err)
-	}
-	if len(items) != want {
-		return nil, fmt.Errorf("event has %d fields, want %d", len(items), want)
 	}
 	return items, nil
 }
@@ -345,28 +349,44 @@ func DecodeChannelCloseEvent(valueB64 string) (*ChannelCloseEvent, error) {
 }
 
 // ChannelWithdrawEvent mirrors one-way-channel's Withdraw event: (to,
-// amount) — emitted when the recipient receives funds via settle or close.
+// amount) in the checked-in contract source. Some deployed events also
+// include a leading 32-byte value whose meaning is not documented; it is
+// preserved as OpaquePrefix rather than assigned guessed semantics.
 type ChannelWithdrawEvent struct {
-	To     string
-	Amount *big.Int
+	OpaquePrefix *[32]byte
+	To           string
+	Amount       *big.Int
 }
 
 // DecodeChannelWithdrawEvent decodes an EventInfo.Value carrying a
 // one-way-channel Withdraw event.
 func DecodeChannelWithdrawEvent(valueB64 string) (*ChannelWithdrawEvent, error) {
-	items, err := decodeEventFields(valueB64, 2)
+	items, err := decodeEventVector(valueB64)
 	if err != nil {
 		return nil, fmt.Errorf("stellar: decode channel Withdraw event: %w", err)
 	}
-	to, err := DecodeAddress(items[0])
-	if err != nil {
-		return nil, fmt.Errorf("stellar: channel Withdraw event: field 0 (to): %w", err)
+	if len(items) != 2 && len(items) != 3 {
+		return nil, fmt.Errorf("stellar: decode channel Withdraw event: event has %d fields, want 2 or 3", len(items))
 	}
-	amount, err := DecodeI128(items[1])
-	if err != nil {
-		return nil, fmt.Errorf("stellar: channel Withdraw event: field 1 (amount): %w", err)
+	toIndex, amountIndex := 0, 1
+	var opaquePrefix *[32]byte
+	if len(items) == 3 {
+		prefix, err := decodeBytes32(items[0])
+		if err != nil {
+			return nil, fmt.Errorf("stellar: channel Withdraw event: field 0 (opaque_prefix): %w", err)
+		}
+		opaquePrefix = &prefix
+		toIndex, amountIndex = 1, 2
 	}
-	return &ChannelWithdrawEvent{To: to, Amount: amount}, nil
+	to, err := DecodeAddress(items[toIndex])
+	if err != nil {
+		return nil, fmt.Errorf("stellar: channel Withdraw event: field %d (to): %w", toIndex, err)
+	}
+	amount, err := DecodeI128(items[amountIndex])
+	if err != nil {
+		return nil, fmt.Errorf("stellar: channel Withdraw event: field %d (amount): %w", amountIndex, err)
+	}
+	return &ChannelWithdrawEvent{OpaquePrefix: opaquePrefix, To: to, Amount: amount}, nil
 }
 
 // ChannelRefundEvent mirrors one-way-channel's Refund event: (from,

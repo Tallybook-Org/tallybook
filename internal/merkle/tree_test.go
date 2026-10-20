@@ -345,3 +345,53 @@ func ExampleTree() {
 	// zero-value proofs are unset: true
 	// zero value verifies a leaf: false
 }
+
+func benchmarkLeaves(count int) [][32]byte {
+	leaves := make([][32]byte, count)
+	for i := range leaves {
+		leaves[i] = sha256.Sum256([]byte(strconv.Itoa(i)))
+	}
+	return leaves
+}
+
+func BenchmarkBuildTree(b *testing.B) {
+	for _, count := range []int{100, 1000, 10000, 100000} {
+		b.Run(strconv.Itoa(count), func(b *testing.B) {
+			leaves := benchmarkLeaves(count)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tree, err := BuildTree(leaves)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if len(tree.Proofs) != count {
+					b.Fatalf("got %d proofs, want %d", len(tree.Proofs), count)
+				}
+			}
+		})
+	}
+}
+
+func BenchmarkBuildTreeProofsForEveryLeaf(b *testing.B) {
+	const count = 10000
+	leaves := benchmarkLeaves(count)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tree, err := BuildTree(leaves)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(tree.Proofs) != count {
+			b.Fatalf("got %d proofs, want %d", len(tree.Proofs), count)
+		}
+		proofNodes := 0
+		for _, proof := range tree.Proofs {
+			proofNodes += len(proof)
+		}
+		if proofNodes == 0 {
+			b.Fatal("no proof nodes were generated")
+		}
+	}
+}

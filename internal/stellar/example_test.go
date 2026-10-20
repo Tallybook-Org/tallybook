@@ -11,6 +11,13 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
 
+func ExampleErrSimulationFailed_Error() {
+	err := &ErrSimulationFailed{Message: "contract failed"}
+	fmt.Println(err.Error())
+	// Output:
+	// stellar: simulation failed: contract failed
+}
+
 func ExampleInvokeAndSubmitWithAuth() {
 	const (
 		contractID        = "CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M"
@@ -45,4 +52,17 @@ func ExampleInvokeAndSubmitWithAuth() {
 	_, _, err = InvokeAndSubmitWithAuth(ctx, client, networkPassphrase, operator, contractID, "resolve_dispute", args, []xdr.SorobanAuthorizationEntry{consumerAuth})
 	fmt.Println(errors.Is(err, context.Canceled))
 	// Output: true
+}
+
+// ExampleErrTransactionFailed_Error constructs an ErrTransactionFailed with
+// a concrete literal transaction hash and result XDR, then calls its Error()
+// method and prints the formatted string.
+func ExampleErrTransactionFailed_Error() {
+	err := &ErrTransactionFailed{
+		Hash:      "83806937259d185c694da8e4efd7d8e7e859c8df235f8f77895f244c999068d3",
+		ResultXDR: "AAAAAAAAAGT////+",
+	}
+	fmt.Println(err.Error())
+	// Output:
+	// stellar: transaction 83806937259d185c694da8e4efd7d8e7e859c8df235f8f77895f244c999068d3 failed on chain
 }
