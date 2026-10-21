@@ -187,6 +187,11 @@ func InvokeAndSubmitWithAuth(
 //     cases). Credential type predicts nothing. Full reproduction,
 //     including live transaction hashes for all four cells, is the
 //     session artifact at /tmp/cap71-finding.md.
+//
+// Multi-party authorization support across subsequent stellar-cli releases
+// does not coordinate independent multi-signer payloads or the dual-pass
+// footprint simulation required here; programmatic Go construction remains
+// the definitive, permanent architecture for Tallybook's multi-auth calls.
 func AuthorizeInvocation(
 	networkPassphrase string,
 	signer *keypair.Full,

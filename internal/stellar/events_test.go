@@ -76,6 +76,31 @@ func ExampleMatchesTopic() {
 	// Output: true
 }
 
+func ExampleDecodeStatementAnchorEvent() {
+	// A genuine ("statement", "anchor") event's Value, captured live
+	// from testnet (tx 24ae654ce0eee96e, fixture events_statement_registry).
+	const anchorValueB64 = "AAAAEAAAAAEAAAAHAAAAEgAAAAAAAAAAaSue9e7ifQ7u45Obpx8FFiCUrvDOYAF+ur/wm7XTZE0AAAASAAAAAAAAAACtXWITvZ/9QnTuL9KzW/xEfHokr4K/TUEhRQ7HUBTv7wAAAAUAAAAAAAAAAgAAAA0AAAAggaEkUz5nXjZ3AZgrgejf1gyEi/t9Axkzv7xLL7BNQiUAAAAKAAAAAAAAAAAAAAAAAAAH0AAAAAoAAAAAAAAAAAAAAAAAAAfQAAAAEAAAAAEAAAABAAAADwAAAARYNDAy"
+	ev, err := DecodeStatementAnchorEvent(anchorValueB64)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("operator:", ev.Operator)
+	fmt.Println("consumer:", ev.Consumer)
+	fmt.Println("seq:", ev.Seq)
+	fmt.Printf("usage_root: %x\n", ev.UsageRoot)
+	fmt.Println("amount_billed:", ev.AmountBilled)
+	fmt.Println("amount_settled:", ev.AmountSettled)
+	fmt.Println("protocol:", ev.Protocol)
+	// Output:
+	// operator: GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A
+	// consumer: GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG
+	// seq: 2
+	// usage_root: 81a124533e675e367701982b81e8dfd60c848bfb7d031933bfbc4b2fb04d4225
+	// amount_billed: 2000
+	// amount_settled: 2000
+	// protocol: X402
+}
+
 func ExampleDecodeStatementDisputeEvent() {
 	// A genuine ("statement", "dispute") event's Value, captured live
 	// from testnet (tx ecbafcd85fc10381, fixture events_statement_registry).
