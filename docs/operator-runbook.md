@@ -63,3 +63,17 @@ stellar contract deploy \
 fix. This deployed successfully and was confirmed live afterward with
 correct `token` / `from` / `deposited` / `balance` / `refund_waiting_period`
 reads against the new instance.
+
+## Fix status (upstream stellar-cli)
+
+I checked every stellar-cli release newer than `28.0.0` — the latest is
+`v28.1.0` (released 2026-09-26) — and none of their release notes or commits
+mention a fix for the `BytesN<32>`-as-strkey encoding trap. The bug is not
+confirmed fixed in any stellar-cli version newer than `28.0.0`, so the
+hex-only workaround above remains required: supply `commitment_key` (and any
+other `BytesN<32>` argument) as hex, never as a `G...` strkey address.
+
+If you confirm the bug is fixed in a newer stellar-cli, update this section
+to note the fixed version and that the hex workaround is no longer required,
+and verify with the deploy command above (commitment_key as hex, then as a
+strkey — the strkey form should trap until the fix ships).

@@ -120,6 +120,28 @@ func ExampleDecodeStatementDisputeEvent() {
 	// reason_hash: 79feb12e0b0f93c8e2657be04712fe001bbb2e11bf5df5ce5f3e6f29e9a18e85
 }
 
+func ExampleDecodeStatementResolveEvent() {
+	// A genuine ("statement", "resolve") event's Value, captured live
+	// from testnet (seq 2 of the anchor→dispute→resolve cycle in
+	// testdata/stellar/events_statement_registry.json).
+	const resolveValueB64 = "AAAAEAAAAAEAAAAFAAAAEgAAAAAAAAAAaSue9e7ifQ7u45Obpx8FFiCUrvDOYAF+ur/wm7XTZE0AAAASAAAAAAAAAACtXWITvZ/9QnTuL9KzW/xEfHokr4K/TUEhRQ7HUBTv7wAAAAUAAAAAAAAAAgAAAA0AAAAg8A5inGgIkyd6LJ6/kc4nFZgaYZYrhltAbEs9w+7SQiwAAAAKAAAAAAAAAAAAAAAAAAAAyA=="
+	ev, err := DecodeStatementResolveEvent(resolveValueB64)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("operator:", ev.Operator)
+	fmt.Println("consumer:", ev.Consumer)
+	fmt.Println("seq:", ev.Seq)
+	fmt.Printf("resolution_hash: %x\n", ev.ResolutionHash)
+	fmt.Println("amount_credited:", ev.AmountCredited)
+	// Output:
+	// operator: GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A
+	// consumer: GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG
+	// seq: 2
+	// resolution_hash: f00e629c680893277a2c9ebf91ce2715981a61962b865b406c4b3dc3eed2422c
+	// amount_credited: 200
+}
+
 // TestDecodePriceBookPublishEvent_AgainstRealEvents decodes two genuine
 // price_book publish events captured live from testnet — one from this
 // package's own pricebook_test.go capture run, one from an earlier
