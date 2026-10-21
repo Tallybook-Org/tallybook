@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/big"
-	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,7 +16,17 @@ import (
 // migration applied, in a fresh database scoped to this test alone — the
 // same pattern internal/store's, internal/custody's, and internal/indexer's
 // own tests use.
-func testSettlePool(t *testing.T) *pgxpool.Pool {
+// testTB is the subset of *testing.T and *testing.B the helpers use, so the
+// benchmark in exposure_benchmark_test.go can reuse the same Postgres guard
+// as the integration tests (a *testing.B is not a *testing.T).
+type testTB interface {
+	Helper()
+	Cleanup(func())
+	Fatalf(string, ...any)
+	Skipf(string, ...any)
+}
+
+func testSettlePool(t testTB) *pgxpool.Pool {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -72,7 +81,7 @@ const (
 
 // insertTestChannel inserts a channels row with the given status,
 // last_settled_amount, and (optionally) close/deadline ledgers.
-func insertTestChannel(t *testing.T, pool *pgxpool.Pool, address, status string, lastSettledAmount int64, closeStartedLedger, refundDeadlineLedger *int32) {
+func insertTestChannel(t testTB, pool *pgxpool.Pool, address, status string, lastSettledAmount int64, closeStartedLedger, refundDeadlineLedger *int32) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO channels (address, operator, funder, token, deposited, withdrawn,
@@ -91,7 +100,7 @@ func insertTestChannel(t *testing.T, pool *pgxpool.Pool, address, status string,
 // custody.Store, which this package doesn't depend on) with a fixed
 // 64-byte signature and signer key, valid unless told otherwise, at
 // receivedAt.
-func insertTestCommitment(t *testing.T, pool *pgxpool.Pool, channel string, amount int64, valid bool, receivedAt time.Time) {
+func insertTestCommitment(t testTB, pool *pgxpool.Pool, channel string, amount int64, valid bool, receivedAt time.Time) {
 	t.Helper()
 	sig := make([]byte, 64)
 	sig[0] = byte(amount) // vary the bytes a little per row; content is never checked here

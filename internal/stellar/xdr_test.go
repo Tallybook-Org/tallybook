@@ -25,6 +25,16 @@ func ExampleDecodeU64() {
 	// 42
 }
 
+func ExampleDecodeU32() {
+	v, err := DecodeU32(ScvU32(42))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// 42
+}
+
 func ExampleScvI32() {
 	v, err := DecodeI32(ScvI32(-42))
 	if err != nil {
