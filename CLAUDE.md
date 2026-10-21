@@ -222,6 +222,10 @@ Events: `("statement", "anchor")` with
    plus your own signed one appended alongside it) makes the host authenticate whichever
    entry it finds first — if that's the unsigned one, decoding its `Void` signature as the
    expected `Vec` fails with `UnexpectedType`. De-duplicate by address; never concatenate.
+   Subsequent `stellar-cli` releases only automate single-party `--auth` for local
+   CLI identities, not multi-party coordination between independent off-chain signers;
+   programmatic authorization entry construction and two-pass simulation in Go
+   (`internal/stellar/invoke.go`) remain necessary and permanent.
 
 ### `one-way-channel` (external, unaudited)
 

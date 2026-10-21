@@ -736,6 +736,44 @@ func ExampleConfig_String() {
 	// Config{DatabaseURL:postgres://tallybook:tallybook@localhost:5432/tallybook StellarRPCURL:https://soroban-testnet.stellar.org NetworkPassphrase:Test SDF Network ; September 2015 PriceBookID:CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA StatementRegistryID:CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA OperatorAddress:GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX OperatorSecretSource:env OperatorSecret:[REDACTED] OperatorSecretPath:[REDACTED] SafetyMarginLedgers:1440 MaxExposure:10000000 MaxExposureAge:24h0m0s PeriodDuration:720h0m0s SettlerTick:30s IndexerStartLedger:4590000 CollectorAddr::8080 LogLevel:INFO HTTPReadHeaderTimeout:5s HTTPReadTimeout:2m0s HTTPWriteTimeout:5m0s HTTPIdleTimeout:2m0s IndexerMaxConsecutiveFailures:3 SettlerMetricsAddr::9101 IndexerAddr::9102 IndexerTick:5s AnchorToken: CollectorPeriodTick:1m0s CollectorAnchorTick:5m0s}
 }
 
+// ExampleConfig_LogValue demonstrates calling Config.LogValue on a concrete
+// literal config, verifying that structured logging receives the redacted
+// string representation without exposing sensitive secrets.
+func ExampleConfig_LogValue() {
+	cfg := &Config{
+		DatabaseURL:                   "postgres://tallybook:tallybook@localhost:5432/tallybook",
+		StellarRPCURL:                 "https://soroban-testnet.stellar.org",
+		NetworkPassphrase:             "Test SDF Network ; September 2015",
+		PriceBookID:                   "CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		StatementRegistryID:           "CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		OperatorAddress:               "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX",
+		OperatorSecretSource:          "env",
+		OperatorSecret:                "SXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+		SafetyMarginLedgers:           1440,
+		MaxExposure:                   big.NewInt(10000000),
+		MaxExposureAge:                24 * time.Hour,
+		PeriodDuration:                720 * time.Hour,
+		SettlerTick:                   30 * time.Second,
+		IndexerStartLedger:            4590000,
+		CollectorAddr:                 ":8080",
+		LogLevel:                      slog.LevelInfo,
+		HTTPReadHeaderTimeout:         5 * time.Second,
+		HTTPReadTimeout:               2 * time.Minute,
+		HTTPWriteTimeout:              5 * time.Minute,
+		HTTPIdleTimeout:               2 * time.Minute,
+		IndexerMaxConsecutiveFailures: 3,
+		SettlerMetricsAddr:            ":9101",
+		IndexerAddr:                   ":9102",
+		IndexerTick:                   5 * time.Second,
+		AnchorToken:                   "",
+		CollectorPeriodTick:           time.Minute,
+		CollectorAnchorTick:           5 * time.Minute,
+	}
+	fmt.Println(cfg.LogValue())
+	// Output:
+	// Config{DatabaseURL:postgres://tallybook:tallybook@localhost:5432/tallybook StellarRPCURL:https://soroban-testnet.stellar.org NetworkPassphrase:Test SDF Network ; September 2015 PriceBookID:CBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA StatementRegistryID:CDAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA OperatorAddress:GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX OperatorSecretSource:env OperatorSecret:[REDACTED] OperatorSecretPath:[REDACTED] SafetyMarginLedgers:1440 MaxExposure:10000000 MaxExposureAge:24h0m0s PeriodDuration:720h0m0s SettlerTick:30s IndexerStartLedger:4590000 CollectorAddr::8080 LogLevel:INFO HTTPReadHeaderTimeout:5s HTTPReadTimeout:2m0s HTTPWriteTimeout:5m0s HTTPIdleTimeout:2m0s IndexerMaxConsecutiveFailures:3 SettlerMetricsAddr::9101 IndexerAddr::9102 IndexerTick:5s AnchorToken: CollectorPeriodTick:1m0s CollectorAnchorTick:5m0s}
+}
+
 func ExampleLoadEnv() {
 	restore := setProcessEnv(validEnv())
 	defer restore()
