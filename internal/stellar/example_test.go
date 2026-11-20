@@ -2,6 +2,7 @@ package stellar
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -86,4 +87,36 @@ func ExampleErrTransactionFailed_Error() {
 	fmt.Println(err.Error())
 	// Output:
 	// stellar: transaction 83806937259d185c694da8e4efd7d8e7e859c8df235f8f77895f244c999068d3 failed on chain
+}
+
+// GetTransactionResult is a response type: the package fills every field by
+// decoding the RPC reply, so a caller sets none of them. The example decodes
+// a NOT_FOUND reply the way the live node sends it — ledger fields present
+// but zero-valued — and shows that callers must gate on Status, not on
+// whether a field is the zero value.
+func ExampleGetTransactionResult() {
+	reply := []byte(`{
+		"status": "NOT_FOUND",
+		"txHash": "aa11",
+		"latestLedger": 1200,
+		"oldestLedger": 1000,
+		"ledger": 0,
+		"createdAt": "",
+		"applicationOrder": 0
+	}`)
+
+	var result GetTransactionResult
+	if err := json.Unmarshal(reply, &result); err != nil {
+		log.Fatal(err)
+	}
+
+	switch result.Status {
+	case GetTransactionStatusSuccess, GetTransactionStatusFailed:
+		fmt.Println("settled in ledger", result.Ledger)
+	case GetTransactionStatusNotFound:
+		// Ledger and the other trailing fields are zero here and must be ignored.
+		fmt.Println("not found, retry after ledger", result.LatestLedger)
+	}
+	// Output:
+	// not found, retry after ledger 1200
 }
