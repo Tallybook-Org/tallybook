@@ -71,6 +71,40 @@ func ExampleRPCError_Error() {
 	// soroban rpc: code -32602: invalid_xdr
 }
 
+// ExampleGetLedgerEntriesResult shows that this is a response type: a caller
+// never constructs or fills it. Client.GetLedgerEntries decodes the RPC
+// reply into it, so every field (Entries, LatestLedger) is set by the
+// package. A caller supplies only the keys passed to GetLedgerEntries; the
+// zero value below is what an unpopulated result looks like, and is not
+// something to act on — LatestLedger 0 means "never decoded", not ledger 0.
+func ExampleGetLedgerEntriesResult() {
+	// The zero value: nothing set by anyone.
+	var zero GetLedgerEntriesResult
+	fmt.Println("zero: entries =", len(zero.Entries), "latestLedger =", zero.LatestLedger)
+
+	// A populated value, obtained the only way a caller should: through the
+	// client. The server replays a minimal getLedgerEntries reply.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":{"entries":[{"key":"AAAA","xdr":"BBBB","lastModifiedLedgerSeq":4609662,"liveUntilLedgerSeq":7561567}],"latestLedger":4611230}}`)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, nil)
+	got, err := c.GetLedgerEntries(context.Background(), []string{"AAAA"})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("decoded: entries =", len(got.Entries), "latestLedger =", got.LatestLedger)
+	fmt.Println("entry: key =", got.Entries[0].Key, "lastModified =", got.Entries[0].LastModifiedLedgerSeq)
+
+	// Output:
+	// zero: entries = 0 latestLedger = 0
+	// decoded: entries = 1 latestLedger = 4611230
+	// entry: key = AAAA lastModified = 4609662
+}
+
 func TestClient_GetLatestLedger(t *testing.T) {
 	srv, lastRequest := fixtureServer(t, "get_latest_ledger")
 	c := NewClient(srv.URL, nil)
