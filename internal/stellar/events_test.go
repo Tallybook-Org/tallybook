@@ -57,6 +57,49 @@ func ExampleDecodePriceBookPublishEvent() {
 	// effective_ledger: 4612165
 }
 
+// ExamplePriceBookPublishEvent shows that a PriceBookPublishEvent is an
+// output type: a caller never sets its fields, DecodePriceBookPublishEvent
+// fills every one of them from the event's wire payload. The zero value
+// carries no information, while a decoded one has all four fields populated.
+func ExamplePriceBookPublishEvent() {
+	var zero PriceBookPublishEvent
+	fmt.Println("zero operator empty:", zero.Operator == "")
+	fmt.Println("zero version:", zero.Version)
+
+	// Build the positional-Vec payload (operator, version, schedule_hash,
+	// effective_ledger) the way the price_book contract emits it.
+	operator, err := ScvAddress("GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A")
+	if err != nil {
+		log.Fatal(err)
+	}
+	hash := [32]byte{0xab}
+	payload, err := MarshalScValBase64(ScvVec([]xdr.ScVal{
+		operator,
+		ScvU32(2),
+		ScvBytes(hash[:]),
+		ScvU32(4612165),
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ev, err := DecodePriceBookPublishEvent(payload)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("operator:", ev.Operator)
+	fmt.Println("version:", ev.Version)
+	fmt.Printf("schedule_hash: %x\n", ev.ScheduleHash[:2])
+	fmt.Println("effective_ledger:", ev.EffectiveLedger)
+	// Output:
+	// zero operator empty: true
+	// zero version: 0
+	// operator: GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A
+	// version: 2
+	// schedule_hash: ab00
+	// effective_ledger: 4612165
+}
+
 func TestMatchesTopic(t *testing.T) {
 	events := loadEventFixture(t, "events_pricebook_publish")
 	ok, err := MatchesTopic(events[0].Topic, TopicPriceBook, TopicPublish)
