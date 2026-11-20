@@ -71,6 +71,44 @@ func ExampleRPCError_Error() {
 	// soroban rpc: code -32602: invalid_xdr
 }
 
+// ExampleGetLatestLedgerResult shows that a caller never constructs this
+// type: it is a pure response type, and every field (ID, ProtocolVersion,
+// Sequence, CloseTime, HeaderXDR, MetadataXDR) is filled by
+// Client.GetLatestLedger when it decodes the RPC node's reply. A caller sets
+// nothing; the zero value is "no ledger fetched yet", while a value returned
+// by GetLatestLedger describes a real ledger. The RPC node is stubbed with a
+// local httptest server so the output is deterministic.
+func ExampleGetLatestLedgerResult() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{` +
+			`"id":"ebf0cf59","protocolVersion":28,"sequence":4611229,` +
+			`"closeTime":"1789079732","headerXdr":"AAAA","metadataXdr":"BBBB"}}`))
+	}))
+	defer srv.Close()
+
+	// Zero value: nothing has been filled in.
+	var zero GetLatestLedgerResult
+	fmt.Println("zero value sequence:", zero.Sequence)
+
+	// Package-filled value: obtained from the client, never built by hand.
+	c := NewClient(srv.URL, nil)
+	latest, err := c.GetLatestLedger(context.Background())
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	fmt.Println("sequence:", latest.Sequence)
+	fmt.Println("protocol version:", latest.ProtocolVersion)
+	fmt.Println("close time (unix):", latest.CloseTime)
+
+	// Output:
+	// zero value sequence: 0
+	// sequence: 4611229
+	// protocol version: 28
+	// close time (unix): 1789079732
+}
+
 func TestClient_GetLatestLedger(t *testing.T) {
 	srv, lastRequest := fixtureServer(t, "get_latest_ledger")
 	c := NewClient(srv.URL, nil)
