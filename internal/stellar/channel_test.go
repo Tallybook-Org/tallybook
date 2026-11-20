@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/stellar/go-stellar-sdk/keypair"
 )
 
 // TestBuildCommitment_MatchesIndependentDerivation checks BuildCommitment's
@@ -277,4 +280,40 @@ func simulateResultServer(t *testing.T, resultXDR string) *httptest.Server {
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// ExampleChannel_Refund shows the call shape of Channel.Refund: the funder
+// signs, and the call returns the hash of the submitted transaction.
+//
+// Refund only succeeds once a close started with CloseStart is effective
+// (after RefundWaitingPeriod ledgers), and it returns the channel's entire
+// remaining balance to the funder — every unsettled commitment becomes
+// worthless, since the contract reserves nothing for the recipient.
+//
+// There is deliberately no // Output: comment. The call needs a live Soroban
+// RPC endpoint and a channel whose close is already effective, so its result
+// is not deterministic. Without an Output comment, go test compiles this
+// example (so a signature change still breaks the build) but never runs it,
+// which means no network connection is opened.
+func ExampleChannel_Refund() {
+	const (
+		contractID        = "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"
+		networkPassphrase = "Test SDF Network ; September 2015"
+	)
+	funder, err := keypair.FromRawSeed([32]byte{1})
+	if err != nil {
+		fmt.Println("funder key:", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	channel := NewChannel(NewClient("https://soroban-testnet.stellar.org", nil), contractID, networkPassphrase)
+	hash, err := channel.Refund(ctx, funder)
+	if err != nil {
+		fmt.Println("refund:", err)
+		return
+	}
+	fmt.Println("refund submitted:", hash)
 }
