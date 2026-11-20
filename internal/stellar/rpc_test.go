@@ -2,6 +2,7 @@ package stellar
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -348,4 +349,26 @@ func containsAll(s string, substrs ...string) bool {
 		}
 	}
 	return true
+}
+
+// LedgerEntryChange is a response-only type: the RPC server fills every
+// field, so a caller never constructs one for a request. The example
+// decodes one the way SimulateTransaction does, and shows that Before is
+// nil for a created entry while After is nil for a deleted one.
+func ExampleLedgerEntryChange() {
+	var changes []LedgerEntryChange
+	raw := `[
+		{"type": "created", "key": "AAAA", "before": null, "after": "QQ=="},
+		{"type": "deleted", "key": "BBBB", "before": "Qg==", "after": null}
+	]`
+	if err := json.Unmarshal([]byte(raw), &changes); err != nil {
+		fmt.Println("decode:", err)
+		return
+	}
+	for _, c := range changes {
+		fmt.Printf("%s: hasBefore=%t hasAfter=%t\n", c.Type, c.Before != nil, c.After != nil)
+	}
+	// Output:
+	// created: hasBefore=false hasAfter=true
+	// deleted: hasBefore=true hasAfter=false
 }
