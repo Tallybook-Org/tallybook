@@ -349,3 +349,43 @@ func containsAll(s string, substrs ...string) bool {
 	}
 	return true
 }
+
+// ExampleLedgerEntryResult shows that a caller never constructs a
+// LedgerEntryResult: the only thing a caller supplies is the base64
+// LedgerKey passed to GetLedgerEntries. Every field of the result (Key, XDR,
+// LastModifiedLedgerSeq, and the optional LiveUntilLedgerSeq and ExtXDR) is
+// filled in by decoding the RPC response, so the zero value below is an
+// "unfilled" entry, not a usable one.
+func ExampleLedgerEntryResult() {
+	// A stand-in RPC node, so the example runs offline.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"jsonrpc":"2.0","id":1,"result":{"entries":[{`+
+			`"key":"AAAABgAAAAHX","xdr":"AAAABgAAAAAA",`+
+			`"lastModifiedLedgerSeq":4609662,"liveUntilLedgerSeq":7561567}],`+
+			`"latestLedger":4611230}}`)
+	}))
+	defer srv.Close()
+
+	// The zero value carries nothing: no key, no data, no ledger sequence.
+	var zero LedgerEntryResult
+	fmt.Printf("zero: key=%q lastModified=%d\n", zero.Key, zero.LastModifiedLedgerSeq)
+
+	// The caller supplies only the key; the package fills the result.
+	c := NewClient(srv.URL, nil)
+	result, err := c.GetLedgerEntries(context.Background(), []string{"AAAABgAAAAHX"})
+	if err != nil {
+		fmt.Println("error:", err)
+		return
+	}
+	entry := result.Entries[0]
+	fmt.Printf("filled: key=%q lastModified=%d liveUntil=%d\n",
+		entry.Key, entry.LastModifiedLedgerSeq, entry.LiveUntilLedgerSeq)
+	// ExtXDR is optional (omitempty) and was absent from this response.
+	fmt.Printf("extXdr empty: %t\n", entry.ExtXDR == "")
+
+	// Output:
+	// zero: key="" lastModified=0
+	// filled: key="AAAABgAAAAHX" lastModified=4609662 liveUntil=7561567
+	// extXdr empty: true
+}
