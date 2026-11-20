@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+
+	"github.com/stellar/go-stellar-sdk/keypair"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -277,4 +279,20 @@ func simulateResultServer(t *testing.T, resultXDR string) *httptest.Server {
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// ExampleChannel_Settle documents the call shape of Channel.Settle. Settle
+// performs on-chain I/O, so the example is compile-checked only and asserts
+// no // Output:, which would require a live Soroban endpoint.
+func ExampleChannel_Settle() {
+	var c *Channel
+	var signer *keypair.Full
+	var amount *big.Int
+	var sig [64]byte
+
+	// The call is type-checked at build time; it is not executed here because
+	// it needs a live network and a funded signer.
+	_ = func() (string, error) {
+		return c.Settle(context.Background(), signer, amount, sig)
+	}
 }
