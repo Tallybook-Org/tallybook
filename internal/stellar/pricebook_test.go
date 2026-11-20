@@ -236,3 +236,44 @@ func ExampleNewPriceBook() {
 	// Test SDF Network ; September 2015
 	// true
 }
+
+// ExamplePriceBook contrasts a properly constructed PriceBook with its zero
+// value. A caller sets Client and ContractID for every call; the package
+// fills in nothing — there is no field it populates on the caller's behalf.
+// NetworkPassphrase is only read by Publish (it is part of the signed
+// transaction envelope), so a read-only caller may leave it empty, as here.
+// The error chain wraps with %w, so the zero value's failure is identified
+// with errors.Is rather than by message text.
+func ExamplePriceBook() {
+	// Replays a recorded simulateTransaction response,
+	// so no network is touched. A real caller would pass its RPC URL.
+	data, err := readFixtureRaw("pricebook_latest")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(data)
+	}))
+	defer srv.Close()
+
+	// Constructed: Client and ContractID set, NetworkPassphrase left empty
+	// because only Publish needs it.
+	pb := &PriceBook{
+		Client:     NewClient(srv.URL, nil),
+		ContractID: realPriceBookContractID,
+	}
+	version, err := pb.Latest(context.Background(), realOperator)
+	fmt.Println(version, err)
+
+	// Zero value: no ContractID, so the call fails while building the
+	// request, before Client is ever used (its nil is never dereferenced).
+	var zero PriceBook
+	_, err = zero.Latest(context.Background(), realOperator)
+	fmt.Println(err != nil)
+
+	// Output:
+	// 11 <nil>
+	// true
+}
