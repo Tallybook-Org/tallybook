@@ -587,3 +587,18 @@ func ExampleStatus() {
 	// Anchored: no dispute opened
 	// Resolved: dispute closed
 }
+
+func ExampleProtocol() {
+	// Protocol is the billing protocol used by a statement. It is set by
+	// the caller when anchoring a statement via StatementRegistry.Anchor
+	// (passed as the protocol argument) and returned in Statement.Protocol
+	// when reading one back. The wire encoding is case-sensitive; always
+	// use the named constants, never bare string literals.
+	for _, p := range []Protocol{ProtocolX402, ProtocolMppCharge, ProtocolMppSession} {
+		fmt.Println(string(p))
+	}
+	// Output:
+	// X402
+	// MppCharge
+	// MppSession
+}

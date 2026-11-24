@@ -1180,3 +1180,45 @@ func ExampleSimulateResourceConfig() {
 	// estimated cpuInsns: 1635562
 	// minResourceFee: 90353
 }
+
+func ExampleRPCError() {
+	// RPCError is a JSON-RPC 2.0 protocol-level error returned by any
+	// Client method when the node rejects the request before invoking the
+	// Soroban method (e.g. malformed XDR, unknown method). It is distinct
+	// from a Soroban-level simulation failure, which appears in
+	// SimulateTransactionResult.Error instead.
+	//
+	// Callers receive RPCError wrapped in the error value returned by
+	// Client methods; use errors.As to inspect Code and Message. The Data
+	// field is optional — the node may omit it; leave it nil when
+	// constructing one for tests.
+	e := &RPCError{
+		Code:    -32600,
+		Message: "Invalid Request",
+	}
+	fmt.Println(e)
+	fmt.Println(e.Code)
+	// Output:
+	// soroban rpc: code -32600: Invalid Request
+	// -32600
+}
+
+func ExampleRestorePreamble() {
+	// RestorePreamble is populated in SimulateTransactionResult.RestorePreamble
+	// when the simulated invocation touched an archived ledger entry. Both
+	// fields are decoded from the RPC response and passed through to the
+	// restore transaction unchanged — callers do not construct or modify them.
+	//
+	// MinResourceFee is a decimal-string stroop count; read it to budget the
+	// restore fee. TransactionData is a base64-encoded SorobanTransactionData
+	// XDR blob that must be attached to the restore transaction verbatim.
+	rp := RestorePreamble{
+		MinResourceFee:  "50000",
+		TransactionData: "AAAA", // placeholder; the real value is base64 XDR from the node
+	}
+	fmt.Println(rp.MinResourceFee)
+	// TransactionData is intentionally not printed: its value is opaque
+	// base64 XDR that cannot be asserted portably in an example.
+	// Output:
+	// 50000
+}

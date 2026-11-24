@@ -259,3 +259,28 @@ func ExamplePriceBook() {
 	// NetworkPassphrase: Test SDF Network ; September 2015
 	// Client is nil: false
 }
+
+func ExamplePriceBookVersion() {
+	// PriceBookVersion mirrors the on-chain struct returned by
+	// PriceBook.GetVersion. All fields are decoded from the contract's XDR
+	// response — the package fills every field; callers read them.
+	//
+	// Operator, Version, URI, EffectiveLedger, and ScheduleHash come from
+	// the publish call; PublishedLedger is the ledger at which the version
+	// was recorded (set by the contract, not the publisher).
+	v := PriceBookVersion{
+		Operator:        "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
+		Version:         1,
+		ScheduleHash:    [32]byte{0xab, 0xcd}, // first two bytes non-zero; rest zero-padded
+		URI:             "https://pay.example.com/schedule-v1.json",
+		EffectiveLedger: 5_000_000,
+		PublishedLedger: 4_999_900,
+	}
+	fmt.Println("version:", v.Version)
+	fmt.Println("uri:", v.URI)
+	fmt.Println("effective_ledger:", v.EffectiveLedger)
+	// Output:
+	// version: 1
+	// uri: https://pay.example.com/schedule-v1.json
+	// effective_ledger: 5000000
+}
