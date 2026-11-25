@@ -340,6 +340,48 @@ func TestReconcileSubmitting_NoSubmittingRowsNeverReadsTheChain(t *testing.T) {
 	}
 }
 
+// ExampleSubmitter shows how a caller constructs and uses Submitter.
+// Submitter has a single unexported field (pool), so a caller sets no struct
+// fields directly — NewSubmitter supplies the *pgxpool.Pool that backs
+// settlement intent and outcome persistence. The zero value leaves pool nil
+// and would panic on the first query; always build one via NewSubmitter.
+//
+// Once constructed, callers drive settlements through Submit (or
+// SubmitWithRetry) and resolve any prior 'submitting' rows on startup with
+// ReconcileSubmitting. Here the context is already cancelled, so the pool's
+// acquire step refuses it before opening a connection, keeping the example
+// runnable with or without Postgres while exercising Submitter's call path.
+func ExampleSubmitter() {
+	// pgxpool.New opens no connection itself — connections are created
+	// lazily on first use — so no database needs to be reachable here.
+	pool, err := pgxpool.New(context.Background(), "postgres://tallybook:tallybook@localhost:5433/tallybook?sslmode=disable")
+	if err != nil {
+		fmt.Println("pool:", err)
+		return
+	}
+	defer pool.Close()
+
+	// How a caller constructs it: NewSubmitter supplies the pool.
+	s := NewSubmitter(pool)
+	fmt.Println("constructed:", s != nil)
+
+	// The zero value leaves pool unset and cannot query Postgres.
+	var zero Submitter
+	fmt.Println("zero value pool unset:", zero.pool == nil)
+
+	// How a caller invokes it: cancelled context is honoured before dialing.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	fake := &fakeChannelSettler{hash: "deadbeef"}
+	_, err = s.Submit(ctx, fake, nil, testChannel, big.NewInt(5000))
+	fmt.Println("cancelled context honoured:", errors.Is(err, context.Canceled))
+
+	// Output:
+	// constructed: true
+	// zero value pool unset: true
+	// cancelled context honoured: true
+}
+
 // ExampleSubmitter_Submit demonstrates the full Submit flow: recording intent
 // before calling the chain, and returning the confirmed record on success.
 //
