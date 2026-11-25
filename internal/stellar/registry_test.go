@@ -588,17 +588,49 @@ func ExampleStatus() {
 	// Resolved: dispute closed
 }
 
-func ExampleProtocol() {
-	// Protocol is the billing protocol used by a statement. It is set by
-	// the caller when anchoring a statement via StatementRegistry.Anchor
-	// (passed as the protocol argument) and returned in Statement.Protocol
-	// when reading one back. The wire encoding is case-sensitive; always
-	// use the named constants, never bare string literals.
-	for _, p := range []Protocol{ProtocolX402, ProtocolMppCharge, ProtocolMppSession} {
-		fmt.Println(string(p))
+// ExampleDispute shows which Dispute fields come from the caller and which
+// come from the contract. A caller never builds a Dispute to send. The
+// consumer passes the operator, seq and reason hash to OpenDispute, and
+// reads a Dispute back with GetDispute. So the literal below sets only what
+// a caller already knows: Consumer (the signer of open_dispute) and
+// ReasonHash. The contract sets OpenedLedger, and AmountCredited,
+// ResolutionHash and ResolvedLedger only once the operator and consumer
+// both authorize resolve_dispute. As Dispute's doc comment says,
+// ResolutionHash and ResolvedLedger stay nil until then, so a caller checks
+// for nil instead of comparing against a zero hash or ledger 0. The RPC
+// endpoint replays the recorded testnet get_dispute response for seq 3,
+// captured before that dispute was resolved
+// (testdata/stellar/registry_get_dispute.json).
+func ExampleDispute() {
+	want := Dispute{
+		Consumer:   "GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG",
+		ReasonHash: sha256.Sum256([]byte("registry-capture-reason")),
 	}
+	fmt.Printf("before opening: openedLedger=%d resolved=%t\n", want.OpenedLedger, want.ResolvedLedger != nil)
+
+	handler, err := sequencedFixtureHandler(map[string][]string{
+		"simulateTransaction": {"registry_get_dispute"},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	registry := NewStatementRegistry(NewClient(srv.URL, nil), "CB75TTWGP3TLKEDGA2WOLEVCNKLUX6X5KS47GMWGBHUAVES7J55LY25M", "Test SDF Network ; September 2015")
+
+	got, err := registry.GetDispute(context.Background(), "GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A", 3)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("caller fields match:", got.Consumer == want.Consumer && got.ReasonHash == want.ReasonHash)
+	fmt.Printf("after opening: openedLedger=%d\n", got.OpenedLedger)
+	if got.ResolutionHash == nil && got.ResolvedLedger == nil {
+		fmt.Println("unresolved: credited", got.AmountCredited)
+	}
+
 	// Output:
-	// X402
-	// MppCharge
-	// MppSession
+	// before opening: openedLedger=0 resolved=false
+	// caller fields match: true
+	// after opening: openedLedger=4612540
+	// unresolved: credited 0
 }
