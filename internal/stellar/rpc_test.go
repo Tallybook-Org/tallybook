@@ -861,6 +861,27 @@ func ExampleGetEventsResult() {
 	// latest closed at: 2026-09-10T22:35:37Z
 }
 
+// ExampleEventFilter constructs an EventFilter the way a caller would,
+// demonstrating that all fields are caller-specified and omitempty.
+// The zero value marshals to an empty object {}; a caller sets exactly
+// the fields they need for filtering getEvents.
+func ExampleEventFilter() {
+	var zero EventFilter
+	zeroWire, _ := json.Marshal(zero)
+	fmt.Printf("zero value: %s\n", zeroWire)
+
+	filter := EventFilter{
+		Type:        "contract",
+		ContractIDs: []string{"CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"},
+		Topics:      [][]string{{"Withdraw"}},
+	}
+	filterWire, _ := json.Marshal(filter)
+	fmt.Printf("constructed: %s\n", filterWire)
+	// Output:
+	// zero value: {}
+	// constructed: {"type":"contract","contractIds":["CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"],"topics":[["Withdraw"]]}
+}
+
 // ExampleSendTransactionResult reads a SendTransactionResult as
 // SendTransaction fills it in from a recorded response. A caller
 // sets none of these fields — every one of them comes from the node. The

@@ -367,3 +367,25 @@ func ExamplePolicy() {
 	// zero value: settle=false trigger=""
 	// configured: settle=true trigger="deadline_pressure" amount=200000000
 }
+
+// ExampleDecision constructs a Decision the way a caller would, demonstrating
+// the fields a caller sets versus what Decide fills in. Every field of
+// Decision is caller-supplied; Decide only sets Amount when
+// ShouldSettle is true.
+func ExampleDecision() {
+	var zero Decision
+	fmt.Printf("zero value: channel=%#v shouldSettle=%t trigger=%v amount=%v\n",
+		zero.Channel, zero.ShouldSettle, zero.Trigger, zero.Amount)
+
+	d := Decision{
+		Channel:      testChannel,
+		ShouldSettle: true,
+		Trigger:      TriggerDeadlinePressure,
+		Amount:       big.NewInt(500_000),
+	}
+	fmt.Printf("constructed: channel=%#v shouldSettle=%t trigger=%v amount=%v\n",
+		d.Channel, d.ShouldSettle, d.Trigger, d.Amount)
+	// Output:
+	// zero value: channel="" shouldSettle=false trigger= amount=<nil>
+	// constructed: channel="CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW" shouldSettle=true trigger=deadline_pressure amount=500000
+}

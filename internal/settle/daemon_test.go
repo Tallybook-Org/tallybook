@@ -303,9 +303,27 @@ func ExampleDaemon_Run() {
 	<-done
 }
 
-// The production LiveChannel is *stellar.Channel; this assertion keeps
-// that true at compile time rather than only in cmd/settler's wiring.
-var _ LiveChannel = (*stellar.Channel)(nil)
+// ExampleDaemon constructs a Daemon via NewDaemon, demonstrating that all
+// fields are caller-supplied dependencies. In production each field is wired
+// from config (database pool, calculator, submitter, channel factory, signer,
+// ledger source, policy). The zero value of Daemon has all nil fields; a
+// caller must always use NewDaemon to obtain a usable instance.
+func ExampleDaemon() {
+	var zero Daemon
+	fmt.Printf("zero value: pool=%v calc=%v submitter=%v channelFactory=%v signer=%v ledgers=%v policy=%+v\n",
+		zero.pool, zero.calc, zero.submitter, zero.channelFactory, zero.signer, zero.ledgers, zero.policy)
+
+	d := NewDaemon(nil, nil, nil, nil, nil, nil, Policy{
+		SafetyMarginLedgers: 1440,
+		MaxExposure:         big.NewInt(10_000_000),
+		MaxExposureAge:      24 * time.Hour,
+	})
+	fmt.Printf("constructed: pool=%v calc=%v submitter=%v channelFactory=%v signer=%v ledgers=%v policy=%+v\n",
+		d.pool, d.calc, d.submitter, d.channelFactory, d.signer, d.ledgers, d.policy)
+	// Output:
+	// zero value: pool=<nil> calc=<nil> submitter=<nil> channelFactory=<nil> signer=<nil> ledgers=<nil> policy={SafetyMarginLedgers:0 MaxExposure:<nil> MaxExposureAge:0s}
+	// constructed: pool=<nil> calc=<nil> submitter=<nil> channelFactory=<nil> signer=<nil> ledgers=<nil> policy={SafetyMarginLedgers:1440 MaxExposure:+10000000 MaxExposureAge:24h0m0s}
+}
 
 // exampleChannel is a stand-in for one deployed one-way-channel, used by
 // ExampleLiveChannel. It records what was settled so Withdrawn reflects

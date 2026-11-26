@@ -465,6 +465,30 @@ func ExampleDecodeChannelWithdrawEvent() {
 	// amount: 5000000
 }
 
+// ExampleChannelWithdrawEvent constructs a ChannelWithdrawEvent the way a
+// caller would: setting To and Amount, leaving OpaquePrefix nil (the package
+// fills it in when decoding from a real event). The zero value's nil
+// OpaquePrefix and empty To distinguish it from a properly-constructed one.
+func ExampleChannelWithdrawEvent() {
+	var zero ChannelWithdrawEvent
+	fmt.Printf("zero value: opaque_prefix=%v to=%q amount=%v\n", zero.OpaquePrefix, zero.To, zero.Amount)
+
+	to := "GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG"
+	amount := big.NewInt(5_000_000)
+	want := ChannelWithdrawEvent{
+		OpaquePrefix: nil,
+		To:           to,
+		Amount:       amount,
+	}
+
+	fmt.Println("to:", want.To)
+	fmt.Println("amount:", want.Amount)
+	// Output:
+	// zero value: opaque_prefix=<nil> to="" amount=<nil>
+	// to: GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG
+	// amount: 5000000
+}
+
 func TestDecodeChannelRefundEvent_RoundTrip(t *testing.T) {
 	from := "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX"
 	fromVal, err := ScvAddress(from)
