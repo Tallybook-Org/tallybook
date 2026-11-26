@@ -234,3 +234,23 @@ func ExampleCalculator_Calculate() {
 	}
 	fmt.Println("unsettled:", exp.Unsettled, "age:", exp.Age(time.Now()))
 }
+
+// ExampleCalculator shows both halves of Calculator's contract: the zero
+// value has a nil pool (Calculate would fail), and NewCalculator returns a
+// initialized Calculator with a non-nil pool. Callers must provide a pool
+// via NewCalculator.
+func ExampleCalculator() {
+	var zero Calculator
+	fmt.Println("zero value - pool is nil:", zero.pool == nil)
+
+	pool, err := pgxpool.New(context.Background(), "postgres://tallybook:tallybook@localhost:5433/tallybook?sslmode=disable")
+	if err != nil {
+		panic(err)
+	}
+	defer pool.Close()
+	calc := NewCalculator(pool)
+	fmt.Println("constructed - pool is non-nil:", calc.pool != nil)
+	// Output:
+	// zero value - pool is nil: true
+	// constructed - pool is non-nil: true
+}

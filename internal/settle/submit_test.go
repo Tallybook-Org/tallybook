@@ -470,3 +470,22 @@ func TestReconcileSubmitting_MultipleRowsResolvedIndependently(t *testing.T) {
 		t.Errorf("700's status = %q, want failed", status700)
 	}
 }
+
+// ExampleChannelSettler demonstrates a value that satisfies the ChannelSettler
+// interface. ChannelSettler is the narrow interface that the daemon and
+// submitter use for on-chain settlement — it only exposes a Settle method.
+// Implementors (such as *stellar.Channel in production, or fakeChannelSettler
+// in tests) must provide the Settle method signature.
+func ExampleChannelSettler() {
+	settler := &fakeChannelSettler{hash: "tx-abc123", err: nil}
+
+	var sig [64]byte
+	hash, err := settler.Settle(context.Background(), nil, big.NewInt(5000), sig)
+	if err != nil {
+		fmt.Println("settle:", err)
+		return
+	}
+	fmt.Println("tx_hash:", hash)
+	// Output:
+	// tx_hash: tx-abc123
+}

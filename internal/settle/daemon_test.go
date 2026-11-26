@@ -391,3 +391,46 @@ func ExampleLiveChannel() {
 	// tx: tx-CB2I
 	// withdrawn after: 25000000
 }
+
+// ExampleChannelFactory shows how a caller constructs a ChannelFactory,
+// which builds a LiveChannel per channel address. The factory is a
+// closure around the one-way-channel binding; in production this is
+// stellar.NewChannel. Here we demonstrate the compile-time contract: the
+// factory function must accept an address string and return a LiveChannel.
+func ExampleChannelFactory() {
+	var factory ChannelFactory = func(address string) LiveChannel {
+		return &exampleChannel{address: address, withdrawn: big.NewInt(0)}
+	}
+
+	ctx := context.Background()
+	live := factory(testChannel)
+
+	before, err := live.Withdrawn(ctx)
+	if err != nil {
+		fmt.Println("withdrawn:", err)
+		return
+	}
+	fmt.Println("withdrawn before:", before)
+
+	// Settle is cumulative: it sweeps up to the commitment's total, not
+	// an increment. The signer is passed through untouched; the real
+	// binding uses it to sign the transaction.
+	var sig [64]byte
+	hash, err := live.Settle(ctx, nil, big.NewInt(25_000_000), sig)
+	if err != nil {
+		fmt.Println("settle:", err)
+		return
+	}
+	fmt.Println("tx:", hash)
+
+	after, err := live.Withdrawn(ctx)
+	if err != nil {
+		fmt.Println("withdrawn:", err)
+		return
+	}
+	fmt.Println("withdrawn after:", after)
+	// Output:
+	// withdrawn before: 0
+	// tx: tx-CB2I
+	// withdrawn after: 25000000
+}

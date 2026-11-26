@@ -318,6 +318,34 @@ func ExampleDecide() {
 	// 500000
 }
 
+// ExampleChannelState shows how a caller constructs a ChannelState value
+// with all fields set. Every field of ChannelState is the caller's
+// responsibility — the package fills in none. This example demonstrates
+// the difference between the zero value and a properly-constructed one,
+// so callers can see which fields they must populate.
+func ExampleChannelState() {
+	now := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
+	deadline := uint32(1_000_000)
+	oldest := now.Add(-25 * time.Hour)
+
+	state := ChannelState{
+		Address:              testChannel,
+		Status:               "open",
+		RefundDeadlineLedger: &deadline,
+		Exposure: &Exposure{
+			HighestVerified:      big.NewInt(500_000),
+			LastSettledAmount:    big.NewInt(0),
+			Unsettled:            big.NewInt(500_000),
+			OldestUnsettledSince: &oldest,
+		},
+	}
+
+	d := Decide(defaultPolicy(), state, 50_000, now)
+	fmt.Printf("settle=%t trigger=%q amount=%s\n", d.ShouldSettle, d.Trigger, d.Amount)
+	// Output:
+	// settle=true trigger="age_threshold" amount=500000
+}
+
 // ExamplePolicy shows how the settler binary builds a Policy and what the
 // zero value means. Policy has no constructor and nothing in this package
 // fills any of its fields in: every field is the caller's to set, from
