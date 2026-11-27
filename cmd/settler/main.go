@@ -105,7 +105,9 @@ func run(ctx context.Context) error {
 	mux.Handle("GET /metrics", metrics)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			slog.Debug("settler: write healthz response", "error", err)
+		}
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {
@@ -113,7 +115,9 @@ func run(ctx context.Context) error {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			slog.Debug("settler: write readyz response", "error", err)
+		}
 	})
 	srv, err := httpserver.New(cfg.SettlerMetricsAddr, mux, httpserver.Timeouts{
 		ReadHeader: cfg.HTTPReadHeaderTimeout,
