@@ -434,3 +434,33 @@ func ExampleChannelFactory() {
 	// tx: tx-CB2I
 	// withdrawn after: 25000000
 }
+
+// exampleLedgerSource is a stand-in for the production adapter over
+// stellar.Client.GetLatestLedger, used by ExampleLedgerSource.
+type exampleLedgerSource struct {
+	ledger uint32
+}
+
+func (s exampleLedgerSource) CurrentLedger(context.Context) (uint32, error) {
+	return s.ledger, nil
+}
+
+// ExampleLedgerSource shows how a caller supplies LedgerSource to
+// NewDaemon: the zero value of the interface is nil (calling CurrentLedger
+// on it panics), so the wiring layer provides a concrete implementation
+// wrapping the Stellar RPC client's latest-ledger call.
+func ExampleLedgerSource() {
+	var zero LedgerSource
+	fmt.Println("zero value is nil:", zero == nil)
+
+	var src LedgerSource = exampleLedgerSource{ledger: 123456}
+	ledger, err := src.CurrentLedger(context.Background())
+	if err != nil {
+		fmt.Println("current ledger:", err)
+		return
+	}
+	fmt.Println("current ledger:", ledger)
+	// Output:
+	// zero value is nil: true
+	// current ledger: 123456
+}

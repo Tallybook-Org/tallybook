@@ -254,3 +254,47 @@ func ExampleCalculator() {
 	// zero value - pool is nil: true
 	// constructed - pool is non-nil: true
 }
+
+// ExampleExposure contrasts the zero-value Exposure (no verified
+// commitments yet, so Decide waits) with one populated for a channel
+// holding unsettled verified revenue. In production Calculator.Calculate
+// fills every field from the channels and commitments tables; callers
+// building Exposure directly (for example to pass into Decide) supply
+// Channel, HighestVerified, LastSettledAmount, Unsettled, and
+// OldestUnsettledSince.
+func ExampleExposure() {
+	since := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	now := time.Date(2025, 1, 1, 12, 30, 0, 0, time.UTC)
+	policy := Policy{
+		SafetyMarginLedgers: 1440,
+		MaxExposure:         big.NewInt(10_000_000),
+		MaxExposureAge:      24 * time.Hour,
+	}
+
+	var zero Exposure
+	zeroDecision := Decide(policy, ChannelState{
+		Address:  testChannel,
+		Status:   "open",
+		Exposure: &zero,
+	}, 1000, now)
+	fmt.Printf("zero: unsettled=%v age=%s shouldSettle=%v\n",
+		zero.Unsettled, zero.Age(now), zeroDecision.ShouldSettle)
+
+	exp := Exposure{
+		Channel:              testChannel,
+		HighestVerified:      big.NewInt(25_000_000),
+		LastSettledAmount:    big.NewInt(5_000_000),
+		Unsettled:            big.NewInt(20_000_000),
+		OldestUnsettledSince: &since,
+	}
+	decision := Decide(policy, ChannelState{
+		Address:  exp.Channel,
+		Status:   "open",
+		Exposure: &exp,
+	}, 1000, now)
+	fmt.Printf("populated: unsettled=%s age=%s shouldSettle=%v trigger=%s\n",
+		exp.Unsettled, exp.Age(now), decision.ShouldSettle, decision.Trigger)
+	// Output:
+	// zero: unsettled=<nil> age=0s shouldSettle=false
+	// populated: unsettled=20000000 age=2h30m0s shouldSettle=true trigger=exposure_threshold
+}
